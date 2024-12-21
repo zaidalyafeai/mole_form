@@ -9,6 +9,12 @@ from git import Repo
 from datetime import date
 from constants import *
 
+from dotenv import load_dotenv
+
+load_dotenv()  # Load environment variables from a .env file
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+
 def validate_url(url):
     """Validate if string is a URL."""
     url_pattern = re.compile(
@@ -88,7 +94,6 @@ def update_pr(new_dataset):
     PR_BODY = f"This is a pull request by @{new_dataset['Added By']} to add a new dataset to the catalogue."
 
     # Initialize GitHub client
-    GITHUB_TOKEN = st.secrets['GITHUB_TOKEN']
     g = Github(GITHUB_TOKEN)
     repo = g.get_repo(REPO_NAME)
 
@@ -340,8 +345,7 @@ def main():
     submitted = st.button("Submit")
 
     if submitted:
-        st.write(st.session_state.config)
-        # update_pr(st.session_state.config)        
+        update_pr(st.session_state.config)        
 
 if __name__ == "__main__":
     main()
