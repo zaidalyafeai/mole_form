@@ -10,28 +10,52 @@ from datetime import date
 from constants import *
 
 from dotenv import load_dotenv
-
+st.set_page_config(
+    page_title="Masader Form", page_icon="📮", initial_sidebar_state="collapsed",
+)
+"# 📮 :rainbow[Masader Form]"
 load_dotenv()  # Load environment variables from a .env file
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
+def validate_github(username):
+    response = requests.get(f"https://api.github.com/users/{username}")
+    if response.status_code == 200:
+        return True
+    else:
+        return False
+        
 def validate_url(url):
-    """Validate if string is a URL."""
-    url_pattern = re.compile(
-        r'^https?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-    return url_pattern.match(url) is not None
+    try:
+        response = requests.head(url, allow_redirects=True, timeout=5)
+        if response.status_code == 200:
+            return True
+        else:
+            return False
+    except requests.ConnectionError:
+        return False
 
+def validate_comma_separated_number(number: str) -> bool:
+    """
+    Validates a number with commas separating thousands.
+    
+    Args:
+        number (str): The number as a string.
+        
+    Returns:
+        bool: True if valid, False otherwise.
+    """
+    # Regular expression pattern to match numbers with comma-separated thousands
+    pattern = r'^\d{1,3}(,\d{3})*$'
+    
+    # Match the pattern
+    return bool(re.fullmatch(pattern, number))
 
 def update_session_config():
     for key in st.session_state.config:
         if key in ['Year']:
             st.session_state[key] = int(st.session_state.config[key])
-        elif key == 'Tasks':
+        elif key == ['Tasks', 'Collection Style', 'Domain']:
             st.session_state[key] = [task.strip() for task in st.session_state.config[key].split(',')]
         elif key == 'Subsets':
             for i,subset in enumerate(st.session_state.config[key]):
@@ -70,20 +94,11 @@ def render_form():
             )
         if name:
             i += 1
-            subsets.append({f'Name':name, f'Dialect':dialect, f'Volume':volume, f'Unit':unit})
+            subsets.append({f'Name':name, f'Dialect':dialect_remapped[dialect], f'Volume':volume, f'Unit':unit})
         else:
             st.session_state.config['Subsets']= subsets
             break
         
-
-def check_masader_catalogue(dataset_name):
-    """Check if dataset exists in Masader catalogue."""
-    try:
-        response = requests.get("https://arbml.github.io/masader/")
-        return dataset_name.lower() in response.text.lower()
-    except:
-        st.warning("Could not check Masader catalogue. Please verify manually.")
-        return False
     
 def update_pr(new_dataset):
 
@@ -136,8 +151,6 @@ def update_pr(new_dataset):
     st.balloons()
 
 def main():
-    # masader['train'].to_json("masader.json", orient="records") 
-    # st.write(masader['train'])
 
     if "config" not in st.session_state:
         with open("default.json", "r") as f:
@@ -146,33 +159,30 @@ def main():
     if "uploaded_file" not in st.session_state:
         st.session_state.uploaded_file = False
 
-    uploaded_file = st.file_uploader("Load json file")
+    st.info(
+    """
+    This is a the Masader form to add datasets to [Masader](https://arbml.github.io/masader/) catalogue.
+    Before starting, please make sure you have the following information:
+    - Check the dataset does not exist in the catelouge using the search [Masader](https://arbml.github.io/masader/search)
+    - You have a valid GitHub username
+    - You have the direct link to the dataset repository
+
+    Once you submit the dataset, we will send a PR, make sure you follow up there if you have any questions. 
+    If you have face any issues post them on [GitHub](https://github.com/arbml/masader/issues).
+    """,
+    icon="👾",
+)
+    uploaded_file = st.file_uploader("", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
 
     if not st.session_state.uploaded_file:
         if uploaded_file:
             reload_config(uploaded_file)
             st.session_state.uploaded_file = True
 
-    st.title("Masader Dataset Form")
-    
-    # Initial warning about catalogue check
-    st.markdown("[Check if dataset is already in the catalogue](https://arbml.github.io/masader/)")
-    
     # Input for GitHub username with reactive search
-    username = st.text_input("Enter GitHub username:", key = 'Added By')
+    username = st.text_input("GitHub username*", key = 'Added By')
     st.session_state.config["Added By"] = username
-
-    if username:  # Check if input is not empty
-        # Call GitHub API to validate username
-        response = requests.get(f"https://api.github.com/users/{username}")
-        
-        if response.status_code == 200:
-            # If user exists, display information
-            user_data = response.json()
-            st.success(f"GitHub User [GitHub Profile]({user_data.get('html_url', '#')}) found!")
-        else:
-            # If user doesn't exist, show error message
-            st.error("GitHub User not found. Please check the username.")
+    
     dataset_name = st.text_input("Name of the dataset*", 
                                 help="For example CALLHOME: Egyptian Arabic Speech Translation Corpus",
                                 key = "Name")
@@ -182,6 +192,7 @@ def main():
     # Subsets
     st.markdown("The different subsets in the dataset if it is broken by dialects.")
     render_form()    
+    
     # Links
     repo_link = st.text_input("Direct link to the dataset repository*", key = "Link")
     st.session_state.config["Link"] = repo_link
@@ -213,19 +224,19 @@ def main():
                             column_options['Dialect'].split(','),
                             help="Used mixed if the dataset contains multiple dialects",
                             key = 'Dialect')
-    st.session_state.config["Dialect"] = dialect
+    st.session_state.config["Dialect"] = dialect_remapped[dialect]
 
-    domain = st.selectbox("Domain*",
+    domain = st.multiselect("Domain*",
                         column_options['Domain'].split(','), key = 'Domain')
-    st.session_state.config["Domain"] = domain
+    st.session_state.config["Domain"] = ','.join(domain)
     
     form_type = st.radio("Form*", column_options['Form'].split(','), key ='Form')
     st.session_state.config["Form"] = form_type
 
-    collection_style = st.radio("Collection Style*",
+    collection_style = st.multiselect("Collection Style*",
                                 column_options['Collection Style'].split(','),
                                 key = '"Collection Style"')
-    st.session_state.config["Collection Style"] = collection_style
+    st.session_state.config["Collection Style"] = ','.join(collection_style)
 
     description = st.text_area("Description*", 
                                 help="brief description of the dataset",
@@ -251,11 +262,11 @@ def main():
     st.session_state.config["Ethical Risks"] = ethical_risks
 
     provider = st.text_input("Provider", 
-                            help="Name of institution i.e. NYU Abu Dhabi", key = 'Provider')
+                            placeholder="Name of institution i.e. NYU Abu Dhabi", key = 'Provider')
     st.session_state.config["Provider"] = provider
     
     derived_from = st.text_input("Derived From",
-                                help="If the dataset is extracted or collected from another dataset",
+                                placeholder="If the dataset is extracted or collected from another dataset",
                                 key = 'Derived From')
     st.session_state.config["Derived From"] = derived_from
     # Paper Information
@@ -263,7 +274,7 @@ def main():
     st.session_state.config["Paper Title"] = paper_title
 
     paper_link = st.text_input("Paper Link",
-                                help="Direct link to the pdf of the paper i.e. https://arxiv.org/pdf/2110.06744.pdf",
+                                placeholder="Direct link to the pdf of the paper i.e. https://arxiv.org/pdf/2110.06744.pdf",
                                 key = 'Paper Link')
     st.session_state.config["Paper Link"] = paper_link
 
@@ -297,14 +308,19 @@ def main():
 
     tasks = st.multiselect("Tasks*",
                         column_options['Tasks'].split(','),
-                        help="What are the tasks", key = 'Tasks')
-    st.session_state.config["Tasks"] = tasks
+                        key = 'Tasks')
+    if 'other' in tasks:
+        other_tasks = st.text_input("Other Tasks*", placeholder = "Enter other tasks separated by comma", help= "Make sure the tasks don't appear in the Tasks field")
+        tasks+= other_tasks.split(',')
+
+    no_other_tasks = []
+    for task in tasks:
+        if task != 'other':
+            no_other_tasks.append(task)
+    st.session_state.config["Tasks"] = ','.join(no_other_tasks)
 
     venue_title = st.text_input("Venue Title", placeholder="Venue shortcut i.e. ACL", key='Venue Title')
     st.session_state.config["Venue Title"] = venue_title
-    # Citations
-    citations = st.text_input("Citations", placeholder="Number of citations", key='Citations')
-    st.session_state.config["Citations"] = citations
     # Venue Type
     venue_type = st.radio(
         "Venue Type",
@@ -345,7 +361,35 @@ def main():
     submitted = st.button("Submit")
 
     if submitted:
-        update_pr(st.session_state.config)        
+        if not validate_github(username.strip()):
+            st.error("Please enter a valid GitHub username.")
+        elif not dataset_name.strip():
+            st.error("Please enter a valid dataset name.")
+        elif not validate_url(repo_link):
+            st.error("Please enter a valid repository link.")
+        elif not license_type.strip():
+            st.error("Please select a valid license.")
+        elif not dialect:
+            st.error("Please enter a valid dialect.")
+        elif not domain:
+            st.error("Please select a valid domain.")
+        elif not collection_style:
+            st.error("Please select a valid collection style")
+        elif not description.strip() or len(description) < 10:
+            st.error("Please enter a non empty (detailed) description of the dataset")
+        elif not validate_comma_separated_number(volume.strip()):
+            st.error("Please enter a valid volume. for example 1,000")
+        elif not unit.strip():
+            st.error("Please select a valid unit.")
+        elif not host.strip():
+            st.error("Please select a valid host.")
+        elif not tasks:
+            st.error("Please select the Tasks.")
+        elif 'other' in tasks and not other_tasks.strip():
+                st.error("Please enter other tasks.")
+        else:
+            st.write(st.session_state.config)
+        # update_pr(st.session_state.config)        
 
 if __name__ == "__main__":
     main()
