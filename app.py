@@ -65,6 +65,8 @@ def update_session_config():
             st.session_state[key] = st.session_state.config[key].strip()
             
 def reload_config(json_data):
+    if 'metadata' in json_data:
+        json_data = json_data['metadata']
     st.session_state.config = json_data
     update_session_config()
 
