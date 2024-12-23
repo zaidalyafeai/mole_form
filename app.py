@@ -55,8 +55,8 @@ def update_session_config():
     for key in st.session_state.config:
         if key in ['Year']:
             st.session_state[key] = int(st.session_state.config[key])
-        elif key == ['Tasks', 'Collection Style', 'Domain']:
-            st.session_state[key] = [task.strip() for task in st.session_state.config[key].split(',')]
+        elif key in ['Tasks', 'Collection Style', 'Domain']:
+            st.session_state[key] = [val.strip() for val in st.session_state.config[key].split(',')]
         elif key == 'Subsets':
             for i,subset in enumerate(st.session_state.config[key]):
                 for subkey in subset:
@@ -64,8 +64,8 @@ def update_session_config():
         else:
             st.session_state[key] = st.session_state.config[key].strip()
             
-def reload_config(uploaded_file):
-    st.session_state.config = json.load(uploaded_file)
+def reload_config(json_data):
+    st.session_state.config = json_data
     update_session_config()
 
 if 'Subsets' not in st.session_state:
@@ -94,7 +94,7 @@ def render_form():
             )
         if name:
             i += 1
-            subsets.append({f'Name':name, f'Dialect':dialect_remapped[dialect], f'Volume':volume, f'Unit':unit})
+            subsets.append({f'Name':name, f'Dialect':dialect, f'Volume':volume, f'Unit':unit})
         else:
             st.session_state.config['Subsets']= subsets
             break
@@ -150,6 +150,18 @@ def update_pr(new_dataset):
     st.success(f"Pull request created: {pr.html_url}")
     st.balloons()
 
+def load_json(json_url):
+    # Make the GET request to fetch the JSON data
+    response = requests.get(json_url)
+
+    # Check if the request was successful
+    if response.status_code == 200:
+        # Parse the JSON content
+        json_data = response.json()
+        reload_config(json_data)
+    else:
+        st.error('failed to load json')
+
 def main():
 
     if "config" not in st.session_state:
@@ -171,13 +183,24 @@ def main():
     If you have face any issues post them on [GitHub](https://github.com/arbml/masader/issues).
     """,
     icon="👾",
-)
-    uploaded_file = st.file_uploader("", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
+)   
+    on = st.toggle("Use external Jsons", help = "Use this option to load an external json file or url")
+    if st.query_params:
+        if st.query_params['json_url']:
+            load_json(st.query_params['json_url'])
 
-    if not st.session_state.uploaded_file:
-        if uploaded_file:
-            reload_config(uploaded_file)
-            st.session_state.uploaded_file = True
+    if on:
+        uploaded_file = st.file_uploader("", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
+
+        if not st.session_state.uploaded_file:
+            if uploaded_file:
+                json_data = json.load(uploaded_file)
+                reload_config(json_data)
+                st.session_state.uploaded_file = True
+        json_url = st.text_input("path to json")
+
+        if json_url:
+            load_json(json_url)
 
     # Input for GitHub username with reactive search
     username = st.text_input("GitHub username*", key = 'Added By')
@@ -224,7 +247,7 @@ def main():
                             column_options['Dialect'].split(','),
                             help="Used mixed if the dataset contains multiple dialects",
                             key = 'Dialect')
-    st.session_state.config["Dialect"] = dialect_remapped[dialect]
+    st.session_state.config["Dialect"] = dialect
 
     domain = st.multiselect("Domain*",
                         column_options['Domain'].split(','), key = 'Domain')
