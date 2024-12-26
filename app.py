@@ -414,7 +414,7 @@ def main():
                 st.error("Please enter other tasks.")
         else:
             st.write(st.session_state.config)
-        # update_pr(st.session_state.config)        
+            update_pr(st.session_state.config)        
 
 if __name__ == "__main__":
     main()
