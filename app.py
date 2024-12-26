@@ -260,7 +260,7 @@ def main():
 
     collection_style = st.multiselect("Collection Style*",
                                 column_options['Collection Style'].split(','),
-                                key = '"Collection Style"')
+                                key = 'Collection Style')
     st.session_state.config["Collection Style"] = ','.join(collection_style)
 
     description = st.text_area("Description*", 
