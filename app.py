@@ -10,6 +10,9 @@ from datetime import date
 from constants import *
 
 from dotenv import load_dotenv
+
+MASADER_BOT_URL = 'https://masaderbot-production.up.railway.app/run'
+
 st.set_page_config(
     page_title="Masader Form", page_icon="📮", initial_sidebar_state="collapsed",
 )
@@ -155,17 +158,24 @@ def update_pr(new_dataset):
     st.success(f"Pull request created: {pr.html_url}")
     st.balloons()
 
-def load_json(json_url):
+def load_json(url, link = None, pdf = None):
     # Make the GET request to fetch the JSON data
-    response = requests.get(json_url)
+    if link:
+        response = requests.post(url, files = {'link':link})
+    elif pdf:
+        response = requests.post(url, files = {'file':pdf})
+    else:
+        response = requests.get(url)
 
     # Check if the request was successful
     if response.status_code == 200:
         # Parse the JSON content
         json_data = response.json()
         reload_config(json_data)
+        return True
     else:
         st.error('failed to load json')
+    return False
 
 def main():
 
@@ -195,6 +205,7 @@ def main():
 
     options = st.selectbox("Options", ["Manual Annotation", "AI Annotation", "Load Json"])
     load_form = False
+
     if options == "Load Json":
         uploaded_file = st.file_uploader("", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
         if uploaded_file:
@@ -206,16 +217,23 @@ def main():
         json_url = st.text_input("path to json")
 
         if json_url:
-            load_json(json_url)
-            load_form = True
+            if load_json(json_url):
+                load_form = True
+
     elif options == "AI Annotation":
         paper_url = st.text_input("arXiv paper link")
-        if paper_url:
-            load_json(f"https://masaderbot-production.up.railway.app/run?link={paper_url}")
-            load_form = True
 
-    else:
-        load_form = True
+        if paper_url:
+            if load_json(MASADER_BOT_URL, link=paper_url):
+                load_form = True
+
+        upload_pdf = st.file_uploader("", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
+        
+        if upload_pdf:
+            # Prepare the file for sending
+            pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
+            if load_json(MASADER_BOT_URL, pdf = pdf):
+                load_form = True
     
     if load_form:         
         # Input for GitHub username with reactive search
