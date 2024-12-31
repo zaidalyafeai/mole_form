@@ -158,10 +158,10 @@ def update_pr(new_dataset):
     st.success(f"Pull request created: {pr.html_url}")
     st.balloons()
 
-def load_json(url, link = None, pdf = None):
+def load_json(url, link = '', pdf = None):
     # Make the GET request to fetch the JSON data
-    if link:
-        response = requests.post(url, files = {'link':link})
+    if link != '':
+        response = requests.post(url, data = {'link':link})
     elif pdf:
         response = requests.post(url, files = {'file':pdf})
     else:
@@ -174,7 +174,7 @@ def load_json(url, link = None, pdf = None):
         reload_config(json_data)
         return True
     else:
-        st.error('failed to load json')
+        st.error(response.text)
     return False
 
 def main():
