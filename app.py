@@ -203,11 +203,11 @@ def main():
         if st.query_params['json_url']:
             load_json(st.query_params['json_url'])
 
-    options = st.selectbox("Options", ["Manual Annotation", "AI Annotation", "Load Json"])
+    options = st.selectbox("Annotation Options", ["Manual Annotation", "AI Annotation", "Load Annotation"])
     load_form = False
 
-    if options == "Load Json":
-        uploaded_file = st.file_uploader("", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
+    if options == "Load Annotation":
+        uploaded_file = st.file_uploader("Upload Json", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
         if uploaded_file:
             json_data = json.load(uploaded_file)
             reload_config(json_data)
@@ -221,13 +221,23 @@ def main():
                 load_form = True
 
     elif options == "AI Annotation":
-        paper_url = st.text_input("arXiv paper link")
+        paper_url = st.text_input("arXiv paper link or direct pdf link")
 
         if paper_url:
-            if load_json(MASADER_BOT_URL, link=paper_url):
-                load_form = True
+            if 'arxiv' in paper_url:
+                if load_json(MASADER_BOT_URL, link=paper_url):
+                    load_form = True
+            else:
+                # Fetch the PDF content from the link
+                response = requests.get(paper_url)
+                response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
 
-        upload_pdf = st.file_uploader("", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
+                # Extract PDF details
+                pdf = (paper_url.split("/")[-1], response.content, response.headers.get('Content-Type', 'application/pdf'))
+                if load_json(MASADER_BOT_URL, pdf=pdf):
+                    load_form = True                
+
+        upload_pdf = st.file_uploader("Upload PDF of the paper", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
         
         if upload_pdf:
             # Prepare the file for sending
@@ -269,7 +279,6 @@ def main():
         year = st.number_input("Year*", 
                                 min_value=2000, 
                                 max_value=current_year,
-                                value = current_year,
                                 help="Year of publishing the dataset/paper",
                                 key = 'Year')
         st.session_state.config["Year"] = year
