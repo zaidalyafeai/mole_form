@@ -61,8 +61,22 @@ def update_session_config():
                 st.session_state[key] = int(st.session_state.config[key])
             except:
                 st.session_state[key] = 2024
-        elif key in ['Tasks', 'Collection Style', 'Domain']:
+        elif key in ['Collection Style', 'Domain']:
             st.session_state[key] = [val.strip() for val in st.session_state.config[key].split(',')]
+        elif key == 'Tasks':
+            tasks = []
+            other_tasks = []
+            for i,task in enumerate(st.session_state.config[key].split(',')):
+                if task not in column_options['Tasks'].split(','):
+                    other_tasks.append(task)
+                else:
+                    tasks.append(task)
+            if len(other_tasks) > 0:
+                if 'other' not in tasks:
+                    tasks.append(tasks)
+                st.session_state[f'other_tasks'] = ','.join(other_tasks)
+            st.session_state[f'Tasks'] = tasks
+
         elif key == 'Subsets':
             for i,subset in enumerate(st.session_state.config[key]):
                 for subkey in subset:
@@ -203,10 +217,10 @@ def main():
         if st.query_params['json_url']:
             load_json(st.query_params['json_url'])
 
-    options = st.selectbox("Annotation Options", ["Manual Annotation", "AI Annotation", "Load Annotation"])
+    options = st.selectbox("Annotation Options", ["💪🏻 Manual Annotation", "🤖 AI Annotation", "🚥 Load Annotation"])
     load_form = False
 
-    if options == "Load Annotation":
+    if options == "🚥 Load Annotation":
         uploaded_file = st.file_uploader("Upload Json", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
         if uploaded_file:
             json_data = json.load(uploaded_file)
@@ -214,14 +228,14 @@ def main():
             st.session_state.uploaded_file = True
             load_form = True
 
-        json_url = st.text_input("path to json")
+        json_url = st.text_input("Path to json", placeholder = 'For example: https://raw.githubusercontent.com/ARBML/masader_form/refs/heads/main/shami.json')
 
         if json_url:
             if load_json(json_url):
                 load_form = True
 
-    elif options == "AI Annotation":
-        paper_url = st.text_input("arXiv paper link or direct pdf link")
+    elif options == "🤖 AI Annotation":
+        paper_url = st.text_input("Insert arXiv or direct pdf link")
 
         if paper_url:
             if 'arxiv' in paper_url:
@@ -231,11 +245,14 @@ def main():
                 # Fetch the PDF content from the link
                 response = requests.get(paper_url)
                 response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
-
+                if response.headers.get("Content-Type") == "application/pdf":
+                    pdf = (paper_url.split("/")[-1], response.content, response.headers.get('Content-Type', 'application/pdf'))
+                    if load_json(MASADER_BOT_URL, pdf=pdf):
+                        load_form = True  
+                else:
+                    st.error(f'Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf')
                 # Extract PDF details
-                pdf = (paper_url.split("/")[-1], response.content, response.headers.get('Content-Type', 'application/pdf'))
-                if load_json(MASADER_BOT_URL, pdf=pdf):
-                    load_form = True                
+                             
 
         upload_pdf = st.file_uploader("Upload PDF of the paper", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
         
@@ -244,6 +261,8 @@ def main():
             pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
             if load_json(MASADER_BOT_URL, pdf = pdf):
                 load_form = True
+    else:
+        load_form = True 
     
     if load_form:         
         # Input for GitHub username with reactive search
@@ -376,7 +395,7 @@ def main():
                             column_options['Tasks'].split(','),
                             key = 'Tasks')
         if 'other' in tasks:
-            other_tasks = st.text_input("Other Tasks*", placeholder = "Enter other tasks separated by comma", help= "Make sure the tasks don't appear in the Tasks field")
+            other_tasks = st.text_input("Other Tasks*", placeholder = "Enter other tasks separated by comma", help= "Make sure the tasks don't appear in the Tasks field", key = 'other_tasks')
             tasks+= other_tasks.split(',')
 
         no_other_tasks = []
