@@ -90,7 +90,7 @@ def reload_config(json_data):
     if 'metadata' in json_data:
         json_data = json_data['metadata']
     update_session_config(json_data)
-
+    st.session_state.show_form = True
 
 def render_form():
     i = 0
@@ -125,7 +125,7 @@ def update_pr(new_dataset):
     REPO_NAME = "ARBML/masader"  # Format: "owner/repo"
     BRANCH_NAME = "add-new-dataset"
     PR_TITLE = f"Adding {new_dataset['Name']} to the catalogue"
-    PR_BODY = f"This is a pull request by @{st.session_state.gh_username} to add a new dataset to the catalogue."
+    PR_BODY = f"This is a pull request by @{st.session_state['gh_username']} to add a new dataset to the catalogue."
 
     # Initialize GitHub client
     g = Github(GITHUB_TOKEN)
@@ -189,13 +189,9 @@ def load_json(url, link = '', pdf = None):
     return False
 
 def reset_config():
-        with open("default.json", "r") as f:
-            reload_config(json.load(f))
-        
-        if 'reload' not in st.session_state:
-            st.session_state.reload = True
-        else:
-            st.session_state.reload = True
+    with open("default.json", "r") as f:
+        reload_config(json.load(f))
+    st.session_state.show_form = False
     
 @st.fragment()
 def final_state():
@@ -282,9 +278,6 @@ def create_json():
 
 def main():
 
-    if "config" not in st.session_state:
-        reset_config()
-
     st.info(
     """
     This is a the Masader form to add datasets to [Masader](https://arbml.github.io/masader/) catalogue.
@@ -296,8 +289,11 @@ def main():
     Once you submit the dataset, we will send a PR, make sure you follow up there if you have any questions. 
     If you have face any issues post them on [GitHub](https://github.com/arbml/masader/issues).
     """,
-    icon="👾",
-)       
+    icon="👾",)
+
+    if 'show_form' not in st.session_state:
+        st.session_state.show_form = False
+
     if st.query_params:
         if st.query_params['json_url']:
             load_json(st.query_params['json_url'])
@@ -312,10 +308,8 @@ def main():
         if upload_file:
             json_data = json.load(upload_file)
             reload_config(json_data)
-            st.session_state.reload  = False
         elif json_url:
             load_json(json_url)
-            st.session_state.reload  = False
         else:
             reset_config()
 
@@ -324,29 +318,27 @@ def main():
         upload_pdf = st.file_uploader("Upload PDF of the paper", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
 
         if paper_url:
-            if 'arxiv' in paper_url and st.session_state.reload:
-                if load_json(MASADER_BOT_URL, link=paper_url):
-                    st.session_state.reload = False
+            if 'arxiv' in paper_url:
+                load_json(MASADER_BOT_URL, link=paper_url)
             else:
                 response = requests.get(paper_url)
                 response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
                 if response.headers.get("Content-Type") == "application/pdf":
                     pdf = (paper_url.split("/")[-1], response.content, response.headers.get('Content-Type', 'application/pdf'))
-                    if load_json(MASADER_BOT_URL, pdf=pdf):
-                        st.session_state.reload = False  
+                    load_json(MASADER_BOT_URL, pdf=pdf)
                 else:
                     st.error(f'Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf')
-                # Extract PDF details                             
 
         elif upload_pdf:
             # Prepare the file for sending
             pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
-            if load_json(MASADER_BOT_URL, pdf = pdf):
-                st.session_state.reload = False
+            load_json(MASADER_BOT_URL, pdf = pdf)
+        else:
+            reset_config()
     else:
-        st.session_state.reload = False
+        st.session_state.show_form = True
     
-    if not st.session_state.reload :         
+    if st.session_state.show_form:         
         with st.form(key="dataset_form"):
             username = st.text_input("GitHub username*", key = 'gh_username', value = 'zaidalyafeai')
             
