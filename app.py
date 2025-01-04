@@ -54,71 +54,69 @@ def validate_comma_separated_number(number: str) -> bool:
     # Match the pattern
     return bool(re.fullmatch(pattern, number))
 
-def update_session_config():
-    for key in st.session_state.config:
+def update_session_config(json_data):
+    for key in json_data:
         if key in ['Year']:
             try:
-                st.session_state[key] = int(st.session_state.config[key])
+                st.session_state[key] = int(json_data[key])
             except:
                 st.session_state[key] = 2024
         elif key in ['Collection Style', 'Domain']:
-            st.session_state[key] = [val.strip() for val in st.session_state.config[key].split(',')]
+            st.session_state[key] = [val.strip() for val in json_data[key].split(',')]
         elif key == 'Tasks':
             tasks = []
             other_tasks = []
-            for i,task in enumerate(st.session_state.config[key].split(',')):
+            
+            for i,task in enumerate(json_data[key].split(',')):
                 if task not in column_options['Tasks'].split(','):
                     other_tasks.append(task)
                 else:
                     tasks.append(task)
-            if len(other_tasks) > 0:
-                if 'other' not in tasks:
-                    tasks.append(tasks)
+
+            if len(other_tasks):
                 st.session_state[f'other_tasks'] = ','.join(other_tasks)
-            st.session_state[f'Tasks'] = tasks
+            
+            if len(tasks):
+                st.session_state[f'Tasks'] = tasks
 
         elif key == 'Subsets':
-            for i,subset in enumerate(st.session_state.config[key]):
+            print(json_data[key])
+            for i,subset in enumerate(json_data[key]):
                 for subkey in subset:
-                    st.session_state[f'{subkey}_{i}'] = st.session_state.config[key][i][subkey]
+                    st.session_state[f'subset_{i}_{subkey.lower()}'] = json_data[key][i][subkey]
         else:
-            st.session_state[key] = st.session_state.config[key].strip()
+            st.session_state[key] = json_data[key].strip()
             
 def reload_config(json_data):
     if 'metadata' in json_data:
         json_data = json_data['metadata']
-    st.session_state.config = json_data
-    update_session_config()
+    update_session_config(json_data)
 
-if 'Subsets' not in st.session_state:
-    st.session_state.Subsets = []
 
 def render_form():
     i = 0
-    subsets = [] 
+    
     while True:
         col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
         with col1:
-            name = st.text_input("Name:", key=f"Name_{i}")
+            name = st.text_input("Name:", key=f"subset_{i}_name")
         with col3:
-            volume = st.text_input("Volume", key=f"Volume_{i}")
+            volume = st.text_input("Volume", key=f"subset_{i}_volume")
         with col2:
             dialect = st.selectbox(
                 "Dialect", 
                 column_options['Dialect'].split(','), 
-                key=f"Dialect_{i}"
+                key=f"subset_{i}_dialect"
             )
         with col4:
             unit = st.selectbox(
                 "Unit", 
                 column_options['Unit'].split(','), 
-                key=f"Unit_{i}"
+                key=f"subset_{i}_unit"
             )
         if name:
             i += 1
-            subsets.append({f'Name':name, f'Dialect':dialect, f'Volume':volume, f'Unit':unit})
         else:
-            st.session_state.config['Subsets']= subsets
             break
         
     
@@ -128,7 +126,7 @@ def update_pr(new_dataset):
     REPO_NAME = "ARBML/masader"  # Format: "owner/repo"
     BRANCH_NAME = "add-new-dataset"
     PR_TITLE = f"Adding {new_dataset['Name']} to the catalogue"
-    PR_BODY = f"This is a pull request by @{new_dataset['Added By']} to add a new dataset to the catalogue."
+    PR_BODY = f"This is a pull request by @{st.session_state.gh_username} to add a new dataset to the catalogue."
 
     # Initialize GitHub client
     g = Github(GITHUB_TOKEN)
@@ -191,14 +189,102 @@ def load_json(url, link = '', pdf = None):
         st.error(response.text)
     return False
 
+def reset_config():
+        with open("default.json", "r") as f:
+            reload_config(json.load(f))
+        
+        if 'reload' not in st.session_state:
+            st.session_state.reload = True
+        else:
+            st.session_state.reload = True
+    
+@st.fragment()
+def final_state():
+    col1, col2 = st.columns(2)
+
+    with col1:
+        submit = st.form_submit_button("Submit")
+    with col2:
+        save   = st.form_submit_button("Save")
+
+    if submit or save:
+        if not validate_github(st.session_state['gh_username'].strip()):
+            st.error("Please enter a valid GitHub username.")
+        elif not st.session_state['Name'].strip():
+            st.error("Please enter a valid dataset name.")
+        elif not validate_url(st.session_state['Link']):
+            st.error("Please enter a valid repository link.")
+        elif not st.session_state['License'].strip():
+            st.error("Please select a valid license.")
+        elif not st.session_state['Dialect']:
+            st.error("Please enter a valid dialect.")
+        elif not st.session_state['Domain']:
+            st.error("Please select a valid domain.")
+        elif not st.session_state['Collection Style']:
+            st.error("Please select a valid collection style")
+        elif not st.session_state['Description'].strip() or len(st.session_state['Description']) < 10:
+            st.error("Please enter a non empty (detailed) description of the dataset")
+        elif not validate_comma_separated_number(st.session_state['Volume'].strip()):
+            st.error("Please enter a valid volume. for example 1,000")
+        elif not st.session_state['Unit'].strip():
+            st.error("Please select a valid unit.")
+        elif not st.session_state['Host'].strip():
+            st.error("Please select a valid host.")
+        elif not st.session_state['Tasks']:
+            st.error("Please select the Tasks.")
+        elif 'other' in st.session_state['Tasks'] and len(st.session_state['Other Tasks'].split(','))< 0:
+            st.error("Please enter other tasks.")
+        elif not st.session_state['Added By'].strip():
+            st.error("Please enter your full name.")
+        else:
+            config = create_json()
+            if submit:
+                update_pr(config)
+            else:
+                save_path = st.text_input("Save Path", value=f"/Users/zaidalyafeai/Documents/Development/masader_bot/testset/{st.session_state['Name'].lower()}.json", help="Enter the directory path to save the JSON file")
+                if save_path:
+                    with open(save_path, "w") as f:
+                        json.dump(config, f, indent=4)
+                    st.success(f"Form saved successfully to {save_path}")
+
+def create_json():
+    config = {}
+    columns = ['Name', 'Subsets', 'HF Link', 'Link', 'License', 'Year', 'Language', 'Dialect', 'Domain', 'Form', 'Collection Style', 'Description', 'Volume', 'Unit', 'Ethical Risks', 'Provider', 'Derived From', 'Paper Title', 'Paper Link', 'Script', 'Tokenized', 'Host', 'Access', 'Cost', 'Test Split', 'Tasks', 'Venue Title', 'Citations', 'Venue Type', 'Venue Name', 'Authors', 'Affiliations', 'Abstract', 'Added By']
+    for key in columns:
+        if key == 'Subsets':
+            config['Subsets'] = []
+            i = 0
+            while True:
+                subset = {}
+                if f'subset_{i}_name' in st.session_state:
+                    if st.session_state[f'subset_{i}_name'] != "":
+                        subset['Name'] = st.session_state[f'subset_{i}_name']
+                        subset['Volume'] = st.session_state[f'subset_{i}_volume']
+                        subset['Dialect'] = st.session_state[f'subset_{i}_dialect']
+                        subset['Unit'] = st.session_state[f'subset_{i}_unit']
+                        config['Subsets'].append(subset)
+                        i += 1
+                        continue
+                break
+        elif key in ['Collection Style', 'Domain']:
+            config[key] = ','.join(st.session_state[key])
+        elif key == 'Tasks':
+            if 'other' in st.session_state[key]:
+                tasks = st.session_state[key]
+                tasks.remove('other')
+                tasks+= st.session_state['other_tasks'].split(',')
+                config[key] = ','.join(tasks)
+            else:
+                config[key] = ','.join(st.session_state[key])
+        else:
+            config[key] = st.session_state[key]
+    return config
+    
+
 def main():
 
     if "config" not in st.session_state:
-        with open("default.json", "r") as f:
-            st.session_state.config = json.load(f)
-
-    if "uploaded_file" not in st.session_state:
-        st.session_state.uploaded_file = False
+        reset_config()
 
     st.info(
     """
@@ -216,265 +302,206 @@ def main():
     if st.query_params:
         if st.query_params['json_url']:
             load_json(st.query_params['json_url'])
+        
+    options = st.selectbox("Annotation Options", ["💪🏻 Manual Annotation", "🤖 AI Annotation", "🚥 Load Annotation"], on_change = reset_config)
 
-    options = st.selectbox("Annotation Options", ["💪🏻 Manual Annotation", "🤖 AI Annotation", "🚥 Load Annotation"])
-    load_form = False
 
     if options == "🚥 Load Annotation":
-        uploaded_file = st.file_uploader("Upload Json", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
-        if uploaded_file:
-            json_data = json.load(uploaded_file)
-            reload_config(json_data)
-            st.session_state.uploaded_file = True
-            load_form = True
-
+        upload_file = st.file_uploader("Upload Json", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
         json_url = st.text_input("Path to json", placeholder = 'For example: https://raw.githubusercontent.com/ARBML/masader_form/refs/heads/main/shami.json')
 
-        if json_url:
-            if load_json(json_url):
-                load_form = True
+        if upload_file:
+            json_data = json.load(upload_file)
+            reload_config(json_data)
+            st.session_state.reload  = False
+        elif json_url:
+            load_json(json_url)
+            st.session_state.reload  = False
+        else:
+            reset_config()
 
     elif options == "🤖 AI Annotation":
         paper_url = st.text_input("Insert arXiv or direct pdf link")
+        upload_pdf = st.file_uploader("Upload PDF of the paper", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
 
         if paper_url:
-            if 'arxiv' in paper_url:
+            if 'arxiv' in paper_url and st.session_state.reload:
                 if load_json(MASADER_BOT_URL, link=paper_url):
-                    load_form = True
+                    st.session_state.reload = False
             else:
-                # Fetch the PDF content from the link
                 response = requests.get(paper_url)
                 response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
                 if response.headers.get("Content-Type") == "application/pdf":
                     pdf = (paper_url.split("/")[-1], response.content, response.headers.get('Content-Type', 'application/pdf'))
                     if load_json(MASADER_BOT_URL, pdf=pdf):
-                        load_form = True  
+                        st.session_state.reload = False  
                 else:
                     st.error(f'Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf')
-                # Extract PDF details
-                             
+                # Extract PDF details                             
 
-        upload_pdf = st.file_uploader("Upload PDF of the paper", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
-        
-        if upload_pdf:
+        elif upload_pdf:
             # Prepare the file for sending
             pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
             if load_json(MASADER_BOT_URL, pdf = pdf):
-                load_form = True
+                st.session_state.reload = False
     else:
-        load_form = True 
+        st.session_state.reload = False
     
-    if load_form:         
-        # Input for GitHub username with reactive search
-        username = st.text_input("GitHub username*", key = 'Added By')
-        st.session_state.config["Added By"] = username
-        
-        dataset_name = st.text_input("Name of the dataset*", 
-                                    help="For example CALLHOME: Egyptian Arabic Speech Translation Corpus",
-                                    key = "Name")
-        
-        st.session_state.config["Name"] = dataset_name
+    if not st.session_state.reload :         
+        with st.form(key="dataset_form"):
+            username = st.text_input("GitHub username*", key = 'gh_username', value = 'zaidalyafeai')
+            
+            dataset_name = st.text_input("Name of the dataset*", 
+                                        help="For example CALLHOME: Egyptian Arabic Speech Translation Corpus",
+                                        key = "Name")
+            
 
-        # Subsets
-        st.markdown("The different subsets in the dataset if it is broken by dialects.")
-        render_form()    
-        
-        # Links
-        repo_link = st.text_input("Direct link to the dataset repository*", key = "Link")
-        st.session_state.config["Link"] = repo_link
+            # Subsets
+            st.markdown("The different subsets in the dataset if it is broken by dialects.")
+            render_form()    
+            
+            # Links
+            repo_link = st.text_input("Direct link to the dataset repository*", key = "Link")
 
-        huggingface_link = st.text_input("Huggingface Link", 
-                                        help="for example https://huggingface.co/datasets/labr",
-                                        key = "HF Link")
-        
-        st.session_state.config["HF Link"] = huggingface_link
+            huggingface_link = st.text_input("Huggingface Link", 
+                                            help="for example https://huggingface.co/datasets/labr",
+                                            key = "HF Link")
+            
 
-        # Dataset Properties
-        license_type = st.selectbox("License*", 
-                                    column_options['License'].split(','), key = "License")
-        
-        st.session_state.config["License"] = license_type
-        current_year = date.today().year
-        year = st.number_input("Year*", 
-                                min_value=2000, 
-                                max_value=current_year,
-                                help="Year of publishing the dataset/paper",
-                                key = 'Year')
-        st.session_state.config["Year"] = year
+            # Dataset Properties
+            license_type = st.selectbox("License*", 
+                                        column_options['License'].split(','), key = "License")
+            
+            current_year = date.today().year
+            year = st.number_input("Year*", 
+                                    min_value=2000, 
+                                    max_value=current_year,
+                                    help="Year of publishing the dataset/paper",
+                                    key = 'Year')
 
-        language = st.radio("Language*", ["ar", "multilingual"], key = 'Language')
-        st.session_state.config["Language"] = language
+            language = st.radio("Language*", ["ar", "multilingual"], key = 'Language')
 
-        dialect = st.selectbox("Dialect*",
-                                column_options['Dialect'].split(','),
-                                help="Used mixed if the dataset contains multiple dialects",
-                                key = 'Dialect')
-        st.session_state.config["Dialect"] = dialect
+            dialect = st.selectbox("Dialect*",
+                                    column_options['Dialect'].split(','),
+                                    help="Used mixed if the dataset contains multiple dialects",
+                                    key = 'Dialect')
 
-        domain = st.multiselect("Domain*",
-                            column_options['Domain'].split(','), key = 'Domain')
-        st.session_state.config["Domain"] = ','.join(domain)
-        
-        form_type = st.radio("Form*", column_options['Form'].split(','), key ='Form')
-        st.session_state.config["Form"] = form_type
+            domain = st.multiselect("Domain*",
+                                column_options['Domain'].split(','), key = 'Domain')
+            
+            form_type = st.radio("Form*", column_options['Form'].split(','), key ='Form')
 
-        collection_style = st.multiselect("Collection Style*",
-                                    column_options['Collection Style'].split(','),
-                                    key = 'Collection Style')
-        st.session_state.config["Collection Style"] = ','.join(collection_style)
+            collection_style = st.multiselect("Collection Style*",
+                                        column_options['Collection Style'].split(','),
+                                        key = 'Collection Style')
 
-        description = st.text_area("Description*", 
-                                    help="brief description of the dataset",
-                                    key = 'Description')
-        st.session_state.config["Description"] = description
+            description = st.text_area("Description*", 
+                                        help="brief description of the dataset",
+                                        key = 'Description')
 
-        # Volume and Units
-        volume = st.text_input("Volume*", 
-                                help="How many samples are in the dataset. Please don't use abbreviations like 10K",
-                                key = 'Volume')
-        st.session_state.config["Volume"] = volume
-        
-        unit = st.radio("Unit*", 
-                        column_options['Unit'].split(','),
-                        help="tokens usually used for ner, pos tagging, etc. sentences for sentiment analysis, documents for text modelling tasks",
-                        key = 'Unit')
-        st.session_state.config["Unit"] = unit
+            # Volume and Units
+            volume = st.text_input("Volume*", 
+                                    help="How many samples are in the dataset. Please don't use abbreviations like 10K",
+                                    key = 'Volume')
+            
+            unit = st.radio("Unit*", 
+                            column_options['Unit'].split(','),
+                            help="tokens usually used for ner, pos tagging, etc. sentences for sentiment analysis, documents for text modelling tasks",
+                            key = 'Unit')
 
-        ethical_risks = st.radio("Ethical Risks",
-                                column_options['Ethical Risks'].split(','),
-                                help="social media datasets are considered mid risks as they might release personal information, others might contain hate speech as well so considered as high risk",
-                                key = 'Ethical Risks')        
-        st.session_state.config["Ethical Risks"] = ethical_risks
+            ethical_risks = st.radio("Ethical Risks",
+                                    column_options['Ethical Risks'].split(','),
+                                    help="social media datasets are considered mid risks as they might release personal information, others might contain hate speech as well so considered as high risk",
+                                    key = 'Ethical Risks')        
 
-        provider = st.text_input("Provider", 
-                                placeholder="Name of institution i.e. NYU Abu Dhabi", key = 'Provider')
-        st.session_state.config["Provider"] = provider
-        
-        derived_from = st.text_input("Derived From",
-                                    placeholder="If the dataset is extracted or collected from another dataset",
-                                    key = 'Derived From')
-        st.session_state.config["Derived From"] = derived_from
-        # Paper Information
-        paper_title = st.text_input("Paper Title", key = 'Paper Title')
-        st.session_state.config["Paper Title"] = paper_title
+            provider = st.text_input("Provider", 
+                                    placeholder="Name of institution i.e. NYU Abu Dhabi", key = 'Provider')
+            
+            derived_from = st.text_input("Derived From",
+                                        placeholder="If the dataset is extracted or collected from another dataset",
+                                        key = 'Derived From')
+            # Paper Information
+            paper_title = st.text_input("Paper Title", key = 'Paper Title')
 
-        paper_link = st.text_input("Paper Link",
-                                    placeholder="Direct link to the pdf of the paper i.e. https://arxiv.org/pdf/2110.06744.pdf",
-                                    key = 'Paper Link')
-        st.session_state.config["Paper Link"] = paper_link
+            paper_link = st.text_input("Paper Link",
+                                        placeholder="Direct link to the pdf of the paper i.e. https://arxiv.org/pdf/2110.06744.pdf",
+                                        key = 'Paper Link')
 
-        # Technical Details
-        script = st.radio("Script*", column_options['Script'].split(','), key='Script')
-        st.session_state.config["Script"] = script
+            # Technical Details
+            script = st.radio("Script*", column_options['Script'].split(','), key='Script')
 
-        tokenized = st.radio("Tokenized*", 
-                            column_options['Tokenized'].split(','),
-                            help="Is the dataset tokenized i.e. الرجل = ال رجل", key='Tokenized')
-        st.session_state.config["Tokenized"] = tokenized
+            tokenized = st.radio("Tokenized*", 
+                                column_options['Tokenized'].split(','),
+                                help="Is the dataset tokenized i.e. الرجل = ال رجل", key='Tokenized')
 
-        host = st.selectbox("Host*",
-                            column_options['Host'].split(','),
-                            help="Where the data resides", key='Host')
-        st.session_state.config["Host"] = host
+            host = st.selectbox("Host*",
+                                column_options['Host'].split(','),
+                                help="Where the data resides", key='Host')
 
-        access = st.radio("Access*",
-                        column_options['Access'].split(','), key='Access')
-        st.session_state.config["Access"] = access
-        cost = ''
-        if access == "With-Fee":
-            cost = st.text_input("Cost", 
-                                help="For example 1750 $", key='Cost')
-            st.session_state.config["Cost"] = cost
-        
-        test_split = st.radio("Test split*",
-                            column_options['Test Split'].split(','),
-                            help="Does the dataset have validation / test split", key='Test Split')
-        st.session_state.config["Test Split"] = test_split        
+            access = st.radio("Access*",
+                            column_options['Access'].split(','), key='Access')
+            cost = ''
+            if access == "With-Fee":
+                cost = st.text_input("Cost", 
+                                    help="For example 1750 $", key='Cost')
+            
+            test_split = st.radio("Test split*",
+                                column_options['Test Split'].split(','),
+                                help="Does the dataset have validation / test split", key='Test Split')
 
-        tasks = st.multiselect("Tasks*",
-                            column_options['Tasks'].split(','),
-                            key = 'Tasks')
-        if 'other' in tasks:
-            other_tasks = st.text_input("Other Tasks*", placeholder = "Enter other tasks separated by comma", help= "Make sure the tasks don't appear in the Tasks field", key = 'other_tasks')
-            tasks+= other_tasks.split(',')
+            tasks = st.multiselect("Tasks*",
+                                column_options['Tasks'].split(','),
+                                key = 'Tasks')
+            if 'other' in tasks:
+                other_tasks = st.text_input("Other Tasks*", placeholder = "Enter other tasks separated by comma", help= "Make sure the tasks don't appear in the Tasks field", key = 'Other Tasks')
+                tasks+= other_tasks.split(',')
 
-        no_other_tasks = []
-        for task in tasks:
-            if task != 'other':
-                no_other_tasks.append(task)
-        st.session_state.config["Tasks"] = ','.join(no_other_tasks)
+            no_other_tasks = []
+            for task in tasks:
+                if task != 'other':
+                    no_other_tasks.append(task)
 
-        venue_title = st.text_input("Venue Title", placeholder="Venue shortcut i.e. ACL", key='Venue Title')
-        st.session_state.config["Venue Title"] = venue_title
-        # Venue Type
-        venue_type = st.radio(
-            "Venue Type",
-            options=column_options['Venue Type'].split(','),
-            help="Select the type of venue", key='Venue Type'
-        )
-        st.session_state.config["Venue Type"] = venue_type
-        # Venue Name
-        venue_name = st.text_input(
-            "Venue Name",
-            placeholder="Full name i.e. Association of Computational Linguistics",
-            key='Venue Name'
-        )
-        st.session_state.config["Venue Name"] = venue_name
+            venue_title = st.text_input("Venue Title", placeholder="Venue shortcut i.e. ACL", key='Venue Title')
 
-        # Authors
-        authors = st.text_area(
-            "Authors",
-            placeholder="Add all authors split by comma"
-            ,key='Authors'
-        )
-        st.session_state.config["Authors"] = authors
+            # Venue Type
+            venue_type = st.radio(
+                "Venue Type",
+                options=column_options['Venue Type'].split(','),
+                help="Select the type of venue", key='Venue Type'
+            )
+            # Venue Name
+            venue_name = st.text_input(
+                "Venue Name",
+                placeholder="Full name i.e. Association of Computational Linguistics",
+                key='Venue Name'
+            )
 
-        # Affiliations
-        affiliations = st.text_area(
-            "Affiliations",
-            placeholder="Enter affiliations", key='Affiliations'
-        )
-        st.session_state.config["Affiliations"] = affiliations
+            # Authors
+            authors = st.text_area(
+                "Authors",
+                placeholder="Add all authors split by comma"
+                ,key='Authors'
+            )
 
-        # Abstract
-        abstract = st.text_area(
-            "Abstract",
-            placeholder="Abstract of the published paper",
-            key='Abstract'
-        )
-        st.session_state.config["Abstract"] = abstract
-        submitted = st.button("Submit")
+            # Affiliations
+            affiliations = st.text_area(
+                "Affiliations",
+                placeholder="Enter affiliations", key='Affiliations'
+            )
 
-        if submitted:
-            if not validate_github(username.strip()):
-                st.error("Please enter a valid GitHub username.")
-            elif not dataset_name.strip():
-                st.error("Please enter a valid dataset name.")
-            elif not validate_url(repo_link):
-                st.error("Please enter a valid repository link.")
-            elif not license_type.strip():
-                st.error("Please select a valid license.")
-            elif not dialect:
-                st.error("Please enter a valid dialect.")
-            elif not domain:
-                st.error("Please select a valid domain.")
-            elif not collection_style:
-                st.error("Please select a valid collection style")
-            elif not description.strip() or len(description) < 10:
-                st.error("Please enter a non empty (detailed) description of the dataset")
-            elif not validate_comma_separated_number(volume.strip()):
-                st.error("Please enter a valid volume. for example 1,000")
-            elif not unit.strip():
-                st.error("Please select a valid unit.")
-            elif not host.strip():
-                st.error("Please select a valid host.")
-            elif not tasks:
-                st.error("Please select the Tasks.")
-            elif 'other' in tasks and not other_tasks.strip():
-                    st.error("Please enter other tasks.")
-            else:
-                st.write(st.session_state.config)
-                update_pr(st.session_state.config)        
+            # Abstract
+            abstract = st.text_area(
+                "Abstract",
+                placeholder="Abstract of the published paper",
+                key='Abstract'
+            )
+
+            added_by = st.text_input(
+                "Full Name*",
+                placeholder="Please Enter your full name",
+                key='Added By'
+            )
+            final_state()
 
 if __name__ == "__main__":
     main()
