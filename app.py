@@ -66,21 +66,20 @@ def update_session_config(json_data):
         elif key == 'Tasks':
             tasks = []
             other_tasks = []
-            
-            for i,task in enumerate(json_data[key].split(',')):
+            for task in [task.strip() for task in json_data[key].split(',')]:
                 if task not in column_options['Tasks'].split(','):
                     other_tasks.append(task)
                 else:
                     tasks.append(task)
-
+            
             if len(other_tasks):
-                st.session_state[f'other_tasks'] = ','.join(other_tasks)
+                st.session_state['Other Tasks'] = ','.join(other_tasks)
+                tasks.append('other')
             
             if len(tasks):
-                st.session_state[f'Tasks'] = tasks
+                st.session_state['Tasks'] = tasks
 
         elif key == 'Subsets':
-            print(json_data[key])
             for i,subset in enumerate(json_data[key]):
                 for subkey in subset:
                     st.session_state[f'subset_{i}_{subkey.lower()}'] = json_data[key][i][subkey]
@@ -272,7 +271,7 @@ def create_json():
             if 'other' in st.session_state[key]:
                 tasks = st.session_state[key]
                 tasks.remove('other')
-                tasks+= st.session_state['other_tasks'].split(',')
+                tasks+= st.session_state['Other Tasks'].split(',')
                 config[key] = ','.join(tasks)
             else:
                 config[key] = ','.join(st.session_state[key])
