@@ -62,7 +62,19 @@ def update_session_config(json_data):
             except:
                 st.session_state[key] = 2024
         elif key in ['Collection Style', 'Domain']:
-            st.session_state[key] = [val.strip() for val in json_data[key].split(',')]
+            values = [val.strip() for val in json_data[key].split(',')]
+            acc_values = []
+
+            # if some values are not legitimate, use other instead
+            for value in values:
+                if value in column_options[key].split(','):
+                    acc_values.append(value)
+
+            if len(values) > len(acc_values):
+                if 'other' not in acc_values:
+                    acc_values.append('other')
+
+            st.session_state[key] = acc_values
         elif key == 'Tasks':
             tasks = []
             other_tasks = []
@@ -74,7 +86,6 @@ def update_session_config(json_data):
             
             if len(other_tasks):
                 st.session_state['Other Tasks'] = ','.join(other_tasks)
-                tasks.append('other')
             
             if len(tasks):
                 st.session_state['Tasks'] = tasks
@@ -227,8 +238,6 @@ def final_state():
             st.error("Please select a valid host.")
         elif not st.session_state['Tasks']:
             st.error("Please select the Tasks.")
-        elif 'other' in st.session_state['Tasks'] and len(st.session_state['Other Tasks'].split(','))< 0:
-            st.error("Please enter other tasks.")
         elif not st.session_state['Added By'].strip():
             st.error("Please enter your full name.")
         else:
@@ -264,13 +273,10 @@ def create_json():
         elif key in ['Collection Style', 'Domain']:
             config[key] = ','.join(st.session_state[key])
         elif key == 'Tasks':
-            if 'other' in st.session_state[key]:
-                tasks = st.session_state[key]
-                tasks.remove('other')
+            tasks = st.session_state[key]
+            if st.session_state['Other Tasks'].strip() != '':
                 tasks+= st.session_state['Other Tasks'].split(',')
-                config[key] = ','.join(tasks)
-            else:
-                config[key] = ','.join(st.session_state[key])
+            config[key] = ','.join(tasks)
         else:
             config[key] = st.session_state[key]
     return config
@@ -443,14 +449,7 @@ def main():
             tasks = st.multiselect("Tasks*",
                                 column_options['Tasks'].split(','),
                                 key = 'Tasks')
-            if 'other' in tasks:
-                other_tasks = st.text_input("Other Tasks*", placeholder = "Enter other tasks separated by comma", help= "Make sure the tasks don't appear in the Tasks field", key = 'Other Tasks')
-                tasks+= other_tasks.split(',')
-
-            no_other_tasks = []
-            for task in tasks:
-                if task != 'other':
-                    no_other_tasks.append(task)
+            other_tasks = st.text_input("Other Tasks*", placeholder = "Enter other tasks separated by comma", help= "Make sure the tasks don't appear in the Tasks field", key = 'Other Tasks')
 
             venue_title = st.text_input("Venue Title", placeholder="Venue shortcut i.e. ACL", key='Venue Title')
 
