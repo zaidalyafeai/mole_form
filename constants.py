@@ -10,8 +10,9 @@ dialect_remapped = {'':'','Classical Arabic': 'ar-CLS: (Arabic (Classic))','Mode
 column_options = {
     'License': 'Apache-2.0,Non Commercial Use - ELRA END USER,BSD,CC BY 2.0,CC BY 3.0,CC BY 4.0,CC BY-NC 2.0,CC BY-NC-ND 4.0,CC BY-SA,CC BY-SA 3.0,CC BY-NC 4.0,CC BY-NC-SA 4.0,CC BY-SA 3.0,CC BY-SA 4.0,CC0,CDLA-Permissive-1.0,GPL-2.0,LDC User Agreement,LGPL-3.0,MIT License,ODbl-1.0,MPL-2.0,ODC-By,unknown,custom',
     'Dialect': ','.join(list(dialect_remapped.keys())),
-    'Collection Style': 'crawling,human annotation,machine annotation,manual curation,LLM generated,other', # how were the examples/labels generated
-    'Domain': 'social media,news articles,reviews,commentary,books,wikipedia,web pages,LLM,public datasets,TV Channels,captions,other', # what is the source of data
+    'Language': 'ar,multilingual',
+    'Collection Style': 'crawling,annotation,machine translation,human translation,manual curation,LLM generated,other',
+    'Domain': 'social media,news articles,reviews,commentary,books,wikipedia,web pages,handwriting,LLM,other',
     'Form': 'text,spoken,images',
     'Unit': 'tokens,sentences,documents,hours,images',
     'Ethical Risks': 'Low,Medium,High',

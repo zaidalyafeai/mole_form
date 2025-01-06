@@ -376,7 +376,7 @@ def main():
                                     help="Year of publishing the dataset/paper",
                                     key = 'Year')
 
-            language = st.radio("Language*", ["ar", "multilingual"], key = 'Language')
+            language = st.radio("Language*", column_options['Language'].split(','), key = 'Language')
 
             dialect = st.selectbox("Dialect*",
                                     column_options['Dialect'].split(','),
