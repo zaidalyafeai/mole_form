@@ -20,6 +20,8 @@ st.set_page_config(
 load_dotenv()  # Load environment variables from a .env file
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+GIT_USER_NAME = os.getenv("GIT_USER_NAME")
+GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL")
 
 def validate_github(username):
     response = requests.get(f"https://api.github.com/users/{username}")
@@ -37,6 +39,23 @@ def validate_url(url):
             return False
     except requests.ConnectionError:
         return False
+
+def validate_dataname(name: str) -> bool:
+    """
+    Validates the name of the dataset.
+    
+    Args:
+        name (str): The name of the dataset.
+        
+    Returns:
+        bool: True if valid, False otherwise.
+    """
+
+    for char in name.lower():
+        if char not in VALID_SYMP_NAMES:
+            st.error(f'Invalid character in the dataset name {char}')
+            return False
+    return True 
 
 def validate_comma_separated_number(number: str) -> bool:
     """
@@ -128,56 +147,106 @@ def render_form():
             i += 1
         else:
             break
-        
-    
+
 def update_pr(new_dataset):
+    PRS = []
+    if os.path.exists('prs.json'):
+        with open('prs.json', 'r') as f:
+            PRS = json.load(f)
+    else:
+        with open('prs.json', 'w') as f:
+            json.dump(PRS, f, indent=4)
+
+    # create a valid name for the dataset
+    data_name = new_dataset['Name'].lower().strip()
+    for symbol in VALID_PUNCT_NAMES:
+        data_name = data_name.replace(symbol, '_')
 
     # Configuration
     REPO_NAME = "ARBML/masader"  # Format: "owner/repo"
-    BRANCH_NAME = "add-new-dataset"
+    BRANCH_NAME = f"add-{data_name}"
     PR_TITLE = f"Adding {new_dataset['Name']} to the catalogue"
-    PR_BODY = f"This is a pull request by @{st.session_state['gh_username']} to add a new dataset to the catalogue."
+    PR_BODY = f"This is a pull request by @{st.session_state['gh_username']} to add a {new_dataset['Name']} to the catalogue."
 
     # Initialize GitHub client
     g = Github(GITHUB_TOKEN)
     repo = g.get_repo(REPO_NAME)
 
+    # setup name and email
+    os.system(f"git config --global user.email {GIT_USER_EMAIL}")
+    os.system(f"git config --global user.name {GIT_USER_NAME}")
+
     # Clone repository
     repo_url = f"https://{GITHUB_TOKEN}@github.com/{REPO_NAME}.git"
     local_path = "./temp_repo"
+
+    pr_exists = False
+
+    # check the list of Pull Requests
+    for pr in PRS:
+        pr_obj = repo.get_pull(pr['number'])
+
+        #check the branch if it exists
+        if pr['branch'] == BRANCH_NAME:
+            print('PR already exists')
+            pr_exists = True
+        else:
+            #  delete unused branches
+            if pr['state'] == 'open':
+                if pr_obj.state == 'closed':
+                    # repo.get_git_ref(f"heads/{pr['branch']}").delete() # might be risky
+                    pr['state'] = 'closed'
+
     if os.path.exists(local_path):
         subprocess.run(["rm", "-rf", local_path])  # Clean up if exists
     Repo.clone_from(repo_url, local_path)
 
     # Modify file
     local_repo = Repo(local_path)
-    
-    data_name = new_dataset['Name'].lower().strip()
-    for symbol in [' ', '/', '\\', ':', '*', '?', '"', '<', '>', '|', '.']:
-        data_name = data_name.replace(symbol, '_')
 
     FILE_PATH = f'datasets/{data_name}.json'
-    with open(f'{local_path}/{FILE_PATH}', "w") as f:
-        json.dump(new_dataset, f, indent=4)
 
-    # Create a new branch
-    local_repo.git.checkout("-b", BRANCH_NAME)
-    local_repo.git.pull("origin", 'main')
+    # if the branch exists
+    if pr_exists:
+        local_repo.git.checkout(BRANCH_NAME)
+        local_repo.git.pull("origin", BRANCH_NAME)
+        with open(f'{local_path}/{FILE_PATH}', "w") as f:
+            json.dump(new_dataset, f, indent=4)
+        local_repo.git.add(FILE_PATH)
+        local_repo.git.commit("-m", f"Updating {FILE_PATH}.json")
+        #check if changes made
+        if local_repo.is_dirty():
+            local_repo.git.push("origin", BRANCH_NAME)
+        else:
+            st.info("No changes made to the dataset")
+            return 
+    else:
+        with open(f'{local_path}/{FILE_PATH}', "w") as f:
+            json.dump(new_dataset, f, indent=4)
+        local_repo.git.checkout("-b", BRANCH_NAME)
+        local_repo.git.pull("origin", 'main')
+        # Commit and push changes
+        local_repo.git.add(FILE_PATH)
+        local_repo.git.commit("-m", f"Creating {FILE_PATH}.json")
+        local_repo.git.push("--set-upstream", "origin", BRANCH_NAME)
 
-    # Commit and push changes
-    local_repo.git.add(FILE_PATH)
-    local_repo.git.commit("-m", "Update data.json")
-    local_repo.git.push("--set-upstream", "origin", BRANCH_NAME)
+    # if the PR doesn't exist
+    if not pr_exists:
+        pr = repo.create_pull(
+            title=PR_TITLE,
+            body=PR_BODY,
+            head=BRANCH_NAME,
+            base=repo.default_branch,
+        )
+        st.success(f"Pull request created: {pr.html_url}")
+        # add the pr 
+        PRS.append({'name': new_dataset['Name'], 'url': pr.html_url, 'branch': BRANCH_NAME, 'state': 'open', 'number': pr.number})
+    else:
+        st.success(f"Pull request updated")
 
-    # Create a pull request
-    pr = repo.create_pull(
-        title=PR_TITLE,
-        body=PR_BODY,
-        head=BRANCH_NAME,
-        base=repo.default_branch,
-    )
-
-    st.success(f"Pull request created: {pr.html_url}")
+    with open('prs.json', 'w') as f:
+        json.dump(PRS, f, indent=4)
+        
     st.balloons()
 
 def load_json(url, link = '', pdf = None):
@@ -216,7 +285,7 @@ def final_state():
     if submit or save:
         if not validate_github(st.session_state['gh_username'].strip()):
             st.error("Please enter a valid GitHub username.")
-        elif not st.session_state['Name'].strip():
+        elif not validate_dataname(st.session_state['Name']):
             st.error("Please enter a valid dataset name.")
         elif not validate_url(st.session_state['Link']):
             st.error("Please enter a valid repository link.")
