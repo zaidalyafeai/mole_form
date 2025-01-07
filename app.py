@@ -213,9 +213,9 @@ def update_pr(new_dataset):
         with open(f'{local_path}/{FILE_PATH}', "w") as f:
             json.dump(new_dataset, f, indent=4)
         local_repo.git.add(FILE_PATH)
-        local_repo.git.commit("-m", f"Updating {FILE_PATH}.json")
         #check if changes made
         if local_repo.is_dirty():
+            local_repo.git.commit("-m", f"Updating {FILE_PATH}")
             local_repo.git.push("origin", BRANCH_NAME)
         else:
             st.info("No changes made to the dataset")
