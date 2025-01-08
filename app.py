@@ -14,11 +14,11 @@ from dotenv import load_dotenv
 MASADER_BOT_URL = 'https://masaderbot-production.up.railway.app/run'
 
 st.set_page_config(
-    page_title="Masader Form", page_icon="📮", initial_sidebar_state="collapsed",
+    page_title="Masader Form", page_icon="📮", initial_sidebar_state="collapsed", 
 )
 "# 📮 :rainbow[Masader Form]"
-load_dotenv()  # Load environment variables from a .env file
 
+load_dotenv()  # Load environment variables from a .env file
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GIT_USER_NAME = os.getenv("GIT_USER_NAME")
 GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL")
@@ -356,7 +356,11 @@ def main():
     st.info(
     """
     This is a the Masader form to add datasets to [Masader](https://arbml.github.io/masader/) catalogue.
-    Before starting, please make sure you have the following information:
+    Before starting, please make sure you read the following instructions:
+    - There are three options
+        - 🦚 Manual Annotation: You can have to insert all the metadata manually.
+        - 🤖 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
+        - 🚥 Load Annotation: Use this option to load a saved metadata annotation. 
     - Check the dataset does not exist in the catelouge using the search [Masader](https://arbml.github.io/masader/search)
     - You have a valid GitHub username
     - You have the direct link to the dataset repository
@@ -367,13 +371,13 @@ def main():
     icon="👾",)
 
     if 'show_form' not in st.session_state:
-        st.session_state.show_form = False
+        reset_config()
 
     if st.query_params:
         if st.query_params['json_url']:
             load_json(st.query_params['json_url'])
         
-    options = st.selectbox("Annotation Options", ["💪🏻 Manual Annotation", "🤖 AI Annotation", "🚥 Load Annotation"], on_change = reset_config)
+    options = st.selectbox("Annotation Options", ["🦚 Manual Annotation", "🤖 AI Annotation", "🚥 Load Annotation"], on_change = reset_config)
 
 
     if options == "🚥 Load Annotation":
@@ -389,6 +393,9 @@ def main():
             reset_config()
 
     elif options == "🤖 AI Annotation":
+        st.warning("‼️ AI annotation uses LLMs to extract the metadata form papers. However, this approach\
+                   is not reliable as LLMs can hellucinate and extract untrustworthy informations. \
+                   Make sure you revise the generated metadata before you submit.")
         paper_url = st.text_input("Insert arXiv or direct pdf link")
         upload_pdf = st.file_uploader("Upload PDF of the paper", help = "You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets")
 
@@ -418,18 +425,20 @@ def main():
             username = st.text_input("GitHub username*", key = 'gh_username', value = 'zaidalyafeai')
             
             dataset_name = st.text_input("Name of the dataset*", 
+                                        placeholder="Use a representative name of the dataset.",
                                         help="For example CALLHOME: Egyptian Arabic Speech Translation Corpus",
                                         key = "Name")
             
-
-            # Subsets
-            st.markdown("The different subsets in the dataset if it is broken by dialects.")
-            render_form()    
+            with st.expander('Add dilaect subsets'):
+                st.caption("Use this field to add dialect subsets of the dataset. For example if the dataset has 1,000 sentences in the Yemeni dialect.\
+                           For example take a look at the [shami subsets](https://github.com/ARBML/masader/tree/main/datasets/shami.json).")
+                render_form()    
             
             # Links
-            repo_link = st.text_input("Direct link to the dataset repository*", key = "Link")
+            repo_link = st.text_input("Link*", placeholder='The link must be accessible', key = "Link")
 
             huggingface_link = st.text_input("Huggingface Link", 
+                                            placeholder="for example https://huggingface.co/datasets/labr",
                                             help="for example https://huggingface.co/datasets/labr",
                                             key = "HF Link")
             
@@ -461,12 +470,14 @@ def main():
                                         column_options['Collection Style'].split(','),
                                         key = 'Collection Style')
 
-            description = st.text_area("Description*", 
+            description = st.text_area("Description*",
+                                        placeholder= 'Description about the dataset and its contents.', 
                                         help="brief description of the dataset",
                                         key = 'Description')
 
             # Volume and Units
             volume = st.text_input("Volume*", 
+                                    placeholder = "For example 1,000.",
                                     help="How many samples are in the dataset. Please don't use abbreviations like 10K",
                                     key = 'Volume')
             
@@ -484,13 +495,13 @@ def main():
                                     placeholder="Name of institution i.e. NYU Abu Dhabi", key = 'Provider')
             
             derived_from = st.text_input("Derived From",
-                                        placeholder="If the dataset is extracted or collected from another dataset",
+                                        placeholder="What is the source dataset, i.e. Common Crawl",
                                         key = 'Derived From')
             # Paper Information
-            paper_title = st.text_input("Paper Title", key = 'Paper Title')
+            paper_title = st.text_input("Paper Title", placeholder="Full title of the paper",key = 'Paper Title')
 
             paper_link = st.text_input("Paper Link",
-                                        placeholder="Direct link to the pdf of the paper i.e. https://arxiv.org/pdf/2110.06744.pdf",
+                                        placeholder="Link to the pdf i.e. https://arxiv.org/pdf/2110.06744.pdf",
                                         key = 'Paper Link')
 
             # Technical Details
@@ -502,14 +513,14 @@ def main():
 
             host = st.selectbox("Host*",
                                 column_options['Host'].split(','),
-                                help="Where the data resides", key='Host')
+                                help="The name of the repository that hosts the data. Use other if not in the options.", key='Host')
 
             access = st.radio("Access*",
                             column_options['Access'].split(','), key='Access')
-            cost = ''
-            if access == "With-Fee":
-                cost = st.text_input("Cost", 
-                                    help="For example 1750 $", key='Cost')
+            
+            cost = st.text_input("Cost",
+                                placeholder="If the access is With-Fee inser the cost, i.e. 1750 $",
+                                help="For example 1750 $", key='Cost')
             
             test_split = st.radio("Test split*",
                                 column_options['Test Split'].split(','),
@@ -518,7 +529,8 @@ def main():
             tasks = st.multiselect("Tasks*",
                                 column_options['Tasks'].split(','),
                                 key = 'Tasks')
-            other_tasks = st.text_input("Other Tasks*", placeholder = "Enter other tasks separated by comma", help= "Make sure the tasks don't appear in the Tasks field", key = 'Other Tasks')
+            
+            other_tasks = st.text_input("Other Tasks*", placeholder = "Other tasks that don't exist in the Tasks options.", help= "Make sure the tasks don't appear in the Tasks field", key = 'Other Tasks')
 
             venue_title = st.text_input("Venue Title", placeholder="Venue shortcut i.e. ACL", key='Venue Title')
 
