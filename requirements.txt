@@ -2,3 +2,5 @@ streamlit==1.41.1
 GitPython==3.1.43
 PyGithub==2.5.0
 python-dotenv==1.0.1
+streamlit-pdf-viewer==0.0.20
+streamlit-tags==1.2.8
