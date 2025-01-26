@@ -578,24 +578,26 @@ def main():
         st.session_state.show_form = True
 
     col1, col2 = st.columns(2)
+    height = 1200
     with col1:
         if st.session_state.show_form:
-            with st.form(key="dataset_form"):
-                create_element("GitHub username*", key="gh_username", value="zaidalyafeai")
+            with st.container(height=height):
+                with st.form(key="dataset_form", border=False):
+                    create_element("GitHub username*", key="gh_username", value="zaidalyafeai")
+                    for key in columns:
+                        if 'options' in input_json[key]:
+                            options = input_json[key]['options']
+                        else:
+                            options = []
+                        create_element(key, options=options, key=key, help = input_json[key]['question'], type = input_json[key]['output_type'])
+                    final_state()
 
-
-                for key in columns:
-                    if 'options' in input_json[key]:
-                        options = input_json[key]['options']
-                    else:
-                        options = []
-                    create_element(key, options=options, key=key, help = input_json[key]['question'], type = input_json[key]['output_type'])
-                final_state()
     with col2:
-        try:
-            pdf_viewer(paper_pdf, width=1000)
-        except:
-            st.error("No PDF found")
+        with st.container(height=height):
+            if paper_pdf:
+                pdf_viewer(paper_pdf, height=height, render_text=True)
+            else:
+                st.error("No PDF found")
 
 
 if __name__ == "__main__":
