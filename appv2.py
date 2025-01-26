@@ -140,21 +140,39 @@ def validate_comma_separated_number(number: str) -> bool:
 
 
 def update_session_config(json_data):
-    for key in json_data:
-        type = column_types[key]
+    for column in json_data:
+        type = column_types[column]
         if type == "List[str]":
-            values = json_data[key]
-            st.session_state[key] = values
+            values = json_data[column]
+            st.session_state[column] = values
 
         elif "List[Dict[" in type:
-            for i, subset in enumerate(json_data[key]):
-                for subkey in subset:
-                    print(f"{key}_{i}_{subkey.lower()}")
-                    st.session_state[f"{key}_{i}_{subkey}"] = json_data[key][
-                        i
-                    ][subkey]
+            subsets = json_data[column]
+            keys = type.replace("List[Dict[", "").replace("]]", "").split(",")
+            keys = [key.strip() for key in keys]
+            i = 0
+            nostop = True
+            while nostop:
+                for key in keys:
+                    if f"{column}_{i}_{key}" in st.session_state:
+                        del st.session_state[f"{column}_{i}_{key}"]
+                    else:
+                        nostop = False
+                        break
+                i += 1
+            if len(subsets) > 0:
+                for i, subset in enumerate(subsets):
+                    for subkey in subset:
+                        st.session_state[f"{column}_{i}_{subkey}"] = subset[subkey]
+            else:
+                for subkey in keys:
+                    if subkey in input_json:
+                        if 'options' in input_json[subkey]:
+                            st.session_state[f"{column}_0_{subkey}"] = input_json[subkey]['options'][-1]
+                        else:
+                            st.session_state[f"{column}_0_{subkey}"] = ""
         else:
-            st.session_state[key] = json_data[key]
+            st.session_state[column] = json_data[column]
 
 
 def reload_config(json_data):
@@ -164,7 +182,9 @@ def reload_config(json_data):
 
     for key in list(json_data.keys()):
         if key not in columns:
+            print('deleting', key)
             del json_data[key]
+    print(json_data)
     update_session_config(json_data)
     st.session_state.show_form = True
 
@@ -329,27 +349,27 @@ def load_json(url, link="", pdf=None):
 
 def create_default_json():
     default_json = {}
-    for key in columns:
-        type = column_types[key]
-        if 'options' in input_json[key]:
+    for column in columns:
+        type = column_types[column]
+        if 'options' in input_json[column]:
             if type in ["str"]:
-                default_json[key] = input_json[key]['options'][-1]
+                default_json[column] = input_json[column]['options'][-1]
             elif type == "List[str]":
-                default_json[key] = [input_json[key]['options'][-1]]
+                default_json[column] = [input_json[column]['options'][-1]]
             else:
                 raise()
         elif type == "List[str]": # no options
-            default_json[key] = []
-        elif type == "List[Dict]":
-            default_json[key] = []
+            default_json[column] = []
+        elif "List[Dict" in type:
+            default_json[column] = []
         elif type == "date":
-            default_json[key] = date.today().year
+            default_json[column] = date.today().year
         elif type == "int":
-            default_json[key] = 0
+            default_json[column] = 0
         elif type == "float":
-            default_json[key] = 0.0
+            default_json[column] = 0.0
         else:
-            default_json[key] = ""
+            default_json[column] = ""
     return default_json
 
 def reset_config():
@@ -392,27 +412,22 @@ def final_state():
             else:
                 continue
         else:
-            config = create_json()
+            config = create_json(use_annotations_paper = True)
             if submit:
                 update_pr(config)
             else:
-                save_path = st.text_input(
-                    "Save Path",
-                    value=f"/Users/zaidalyafeai/Documents/Development/masader_bot/validset/{st.session_state['Name'].lower()}.json",
-                    help="Enter the directory path to save the JSON file",
-                )
-                if save_path:
-                    with open(save_path, "w") as f:
-                        json.dump(config, f, indent=4)
-                    st.success(f"Form saved successfully to {save_path}")
+                save_path = f"/Users/zaidalyafeai/Documents/Development/masader_bot/validset/{st.session_state['Name'].lower()}.json"
+                with open(save_path, "w") as f:
+                    json.dump(config, f, indent=4)
+                st.success(f"Form saved successfully to [{save_path}]({save_path})")
 
 
-def create_json():
+def create_json(use_annotations_paper = False):
     config = {}
-    for key in columns:
-        type = column_types[key]
+    for column in columns:
+        type = column_types[column]
         if "List[Dict[" in type:
-            config[key] = []
+            config[column] = []
             i = 0
             while True:
                 subset = {}
@@ -421,17 +436,27 @@ def create_json():
                     for subset_key_name in matched_subsets:
                         subset_name = subset_key_name.split("_")[-1]
                         subset[subset_name] = st.session_state[subset_key_name]
-                    config[key].append(subset)
+                    config[column].append(subset)
                     i += 1
                 else:
                     break
         else:
-            config[key] = st.session_state[key]
+            config[column] = st.session_state[column]
+    if use_annotations_paper:
+        config['annotations_from_paper'] = {}
+        for column in columns:
+            if column in ['Citations', 'Added By']:
+                config['annotations_from_paper'][column] = -1
+            else:
+                config['annotations_from_paper'][column] = 1
     return config
 
 
 def create_element(label, placeholder="", help="", key="", value="", options=[], type = "str"):
-    st.write(label)
+    if label in required_columns:
+        st.write(f'{label}*')
+    else:
+        st.write(label)
     if key in input_json:
         if 'option_description' in input_json[key]:
             desc = ""
@@ -485,7 +510,10 @@ def create_element(label, placeholder="", help="", key="", value="", options=[],
 
 
 def main():
-
+    if 'paper_pdf' not in st.session_state:
+        st.session_state['paper_pdf'] = None
+    if 'paper_url' not in st.session_state:
+        st.session_state['paper_url'] = None
     st.info(
         """
     This is a the Masader form to add datasets to [Masader](https://arbml.github.io/masader/) catalogue.
@@ -548,9 +576,12 @@ def main():
         )
 
         if paper_url:
-            if "arxiv" in paper_url:
+            if st.session_state['paper_url'] != paper_url:
                 response = requests.get(paper_url)
                 paper_pdf = response.content
+                st.session_state['paper_url'] = paper_url
+                st.session_state['paper_pdf'] = paper_pdf
+            if "arxiv" in paper_url:
                 load_json(MASADER_BOT_URL, link=paper_url)
             else:
                 response = requests.get(paper_url)
@@ -561,7 +592,6 @@ def main():
                         response.content,
                         response.headers.get("Content-Type", "application/pdf"),
                     )
-                    paper_pdf = response.content
                     load_json(MASADER_BOT_URL, pdf=pdf)
                 else:
                     st.error(
@@ -571,6 +601,7 @@ def main():
         elif upload_pdf:
             # Prepare the file for sending
             pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
+            st.session_state['paper_pdf'] = upload_pdf.getvalue()
             load_json(MASADER_BOT_URL, pdf=pdf)
         else:
             reset_config()
@@ -594,10 +625,10 @@ def main():
 
     with col2:
         with st.container(height=height):
-            if paper_pdf:
-                pdf_viewer(paper_pdf, height=height, render_text=True)
+            if st.session_state['paper_pdf'] is not None:
+                pdf_viewer(st.session_state['paper_pdf'], height=height, render_text=True)
             else:
-                st.error("No PDF found")
+                st.warning("No PDF found")
 
 
 if __name__ == "__main__":
