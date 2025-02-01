@@ -30,6 +30,7 @@ GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL")
 
 import requests
 
+
 def fetch_json_with_token(url: str):
     """
     Fetch a JSON file from a GitHub URL using a personal access token.
@@ -47,14 +48,18 @@ def fetch_json_with_token(url: str):
     }
 
     response = requests.get(url, headers=headers)
-    
+
     if response.status_code == 200:
         return response.json()  # Parse the JSON content
     else:
-        raise Exception(f"Failed to fetch JSON. Status code: {response.status_code}, Message: {response.text}")
+        raise Exception(
+            f"Failed to fetch JSON. Status code: {response.status_code}, Message: {response.text}"
+        )
+
 
 # Example Usage
-url = "https://raw.githubusercontent.com/ARBML/masader_bot/main/schema/ar.json"
+mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr"])
+url = f"https://raw.githubusercontent.com/ARBML/masader_bot/main/schema/{mode}.json"
 
 try:
     input_json = fetch_json_with_token(url)
@@ -63,8 +68,8 @@ except Exception as e:
 
 evaluation_subsets = {}
 for c in input_json:
-    if 'validation_group' in input_json[c]:
-        group = input_json[c]['validation_group']
+    if "validation_group" in input_json[c]:
+        group = input_json[c]["validation_group"]
         if group not in evaluation_subsets:
             evaluation_subsets[group] = []
         evaluation_subsets[group].append(c)
@@ -77,14 +82,16 @@ NUM_VALIDATION_COLUMNS = len(validation_columns)
 
 column_types = {}
 for c in input_json:
-    column_types[c] = input_json[c]['output_type']
+    column_types[c] = input_json[c]["output_type"]
 
 required_columns = []
 for c in input_json:
-    if input_json[c]['required']:
+    if input_json[c]["required"]:
         required_columns.append(c)
 
 columns = list(input_json.keys())
+
+
 def validate_github(username):
     response = requests.get(f"https://api.github.com/users/{username}")
     if response.status_code == 200:
@@ -167,8 +174,10 @@ def update_session_config(json_data):
             else:
                 for subkey in keys:
                     if subkey in input_json:
-                        if 'options' in input_json[subkey]:
-                            st.session_state[f"{column}_0_{subkey}"] = input_json[subkey]['options'][-1]
+                        if "options" in input_json[subkey]:
+                            st.session_state[f"{column}_0_{subkey}"] = input_json[
+                                subkey
+                            ]["options"][-1]
                         else:
                             st.session_state[f"{column}_0_{subkey}"] = ""
         else:
@@ -182,9 +191,13 @@ def reload_config(json_data):
 
     for key in list(json_data.keys()):
         if key not in columns:
-            print('deleting', key)
+            print("deleting", key)
             del json_data[key]
-    print(json_data)
+    try:
+        st.session_state.paper_url = json_data['Paper Link']
+    except Exception as e:
+        print(e)
+        pass
     update_session_config(json_data)
     st.session_state.show_form = True
 
@@ -203,9 +216,11 @@ def render_list_dict(c, type):
             elem = None
             with cols[j]:
                 if subkey in input_json:
-                    if 'options' in input_json[subkey]:
-                        options = input_json[subkey]['options']
-                        elem = st.selectbox(subkey, options=options, key=f"{c}_{i}_{subkey}")
+                    if "options" in input_json[subkey]:
+                        options = input_json[subkey]["options"]
+                        elem = st.selectbox(
+                            subkey, options=options, key=f"{c}_{i}_{subkey}"
+                        )
                     else:
                         elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
                 else:
@@ -342,27 +357,28 @@ def load_json(url, link="", pdf=None):
         # Parse the JSON content
         json_data = response.json()
         reload_config(json_data)
-        return True
+        return json_data
     else:
         st.error(response.text)
-    return False
+    return None
+
 
 def create_default_json():
     default_json = {}
     for column in columns:
         type = column_types[column]
-        if 'options' in input_json[column]:
+        if "options" in input_json[column]:
             if type in ["str"]:
-                default_json[column] = input_json[column]['options'][-1]
+                default_json[column] = input_json[column]["options"][-1]
             elif type == "List[str]":
-                default_json[column] = [input_json[column]['options'][-1]]
+                default_json[column] = [input_json[column]["options"][-1]]
             else:
-                raise()
-        elif type == "List[str]": # no options
+                raise ()
+        elif type == "List[str]":  # no options
             default_json[column] = []
         elif "List[Dict" in type:
             default_json[column] = []
-        elif type == "date":
+        elif type == "date[year]":
             default_json[column] = date.today().year
         elif type == "int":
             default_json[column] = 0
@@ -372,10 +388,20 @@ def create_default_json():
             default_json[column] = ""
     return default_json
 
+
 def reset_config():
     default_json = create_default_json()
     reload_config(default_json)
     st.session_state.show_form = False
+
+
+def create_name(name):
+    if " " in name:
+        # first name of each word
+        name = name.split(" ")
+        name = [n[0] for n in name]
+        name = "".join(name)
+    return name.lower()
 
 
 @st.fragment()
@@ -392,7 +418,7 @@ def final_state():
             st.error("Please enter a valid GitHub username.")
         for key in required_columns:
             value = st.session_state[key]
-            type  = column_types[key]
+            type = column_types[key]
             if type in ["List[str]", "List[Dict]"]:
                 if len(value) == 0:
                     st.error(f"Please enter a valid {key}.")
@@ -412,18 +438,20 @@ def final_state():
             else:
                 continue
         else:
-            config = create_json(use_annotations_paper = True)
+            config = create_json(use_annotations_paper=False)
             if submit:
                 update_pr(config)
             else:
-                save_path = f"/Users/zaidalyafeai/Documents/Development/masader_bot/validset/{st.session_state['Name'].lower()}.json"
+                save_path = f"/Users/zaidalyafeai/Documents/Development/masader_bot/evals/{mode}/testset/{create_name(st.session_state['Name'])}.json"
                 with open(save_path, "w") as f:
                     json.dump(config, f, indent=4)
                 st.success(f"Form saved successfully to [{save_path}]({save_path})")
 
 
-def create_json(use_annotations_paper = False):
+def create_json(use_annotations_paper=False):
     config = {}
+    if use_annotations_paper:
+        config["annotations_from_paper"] = {}
     for column in columns:
         type = column_types[column]
         if "List[Dict[" in type:
@@ -442,46 +470,74 @@ def create_json(use_annotations_paper = False):
                     break
         else:
             config[column] = st.session_state[column]
-    if use_annotations_paper:
-        config['annotations_from_paper'] = {}
-        for column in columns:
-            if column in ['Citations', 'Added By']:
-                config['annotations_from_paper'][column] = -1
-            else:
-                config['annotations_from_paper'][column] = 1
+            if use_annotations_paper:
+                if column in ["Citations", "Added By"]:
+                    config["annotations_from_paper"][column] = -1
+                else:
+                    config["annotations_from_paper"][column] = (
+                        1 if st.session_state[f"annot_{column}"] else 0
+                    )
     return config
 
 
-def create_element(label, placeholder="", help="", key="", value="", options=[], type = "str"):
+def create_element(
+    label,
+    placeholder="",
+    help="",
+    key="",
+    value="",
+    options=[],
+    type="str",
+    use_annotations_paper=False,
+):
     if label in required_columns:
-        st.write(f'{label}*')
+        st.write(f"{label}*")
     else:
         st.write(label)
+    if use_annotations_paper:
+        st.toggle(
+            f"Paper annotated",
+            key=f"annot_{key}",
+            value=True,
+        )
     if key in input_json:
-        if 'option_description' in input_json[key]:
+        if "option_description" in input_json[key]:
             desc = ""
-            for option in input_json[key]['option_description']:
-                desc += f"- **{option}**: {input_json[key]['option_description'][option]}\n"
+            for option in input_json[key]["option_description"]:
+                desc += (
+                    f"- **{option}**: {input_json[key]['option_description'][option]}\n"
+                )
             if help == "":
                 help = desc
-    if type in ["int", "float", "date"]:
-        st.number_input(key, key=key, label_visibility="collapsed", step = 1, help = help)
+    if type == "float":
+        st.number_input(
+            key,
+            key=key,
+            label_visibility="collapsed",
+            step=0.1,
+        )
+    if type in ["int", "date[year]"]:
+        st.number_input(key, key=key, label_visibility="collapsed", step=1, help=help)
     elif (len(options) > 0 and len(options) <= 5) and type == "str":
-        st.radio(key, options=options, key=key, label_visibility="collapsed", help = help)
+        st.radio(key, options=options, key=key, label_visibility="collapsed", help=help)
     elif len(options) > 0 and type == "str":
-        st.selectbox(key, options=options, key=key, label_visibility="collapsed", help = help)
+        st.selectbox(
+            key, options=options, key=key, label_visibility="collapsed", help=help
+        )
     elif type == "List[str]":
         if len(options) > 0:
-            st.multiselect(key, options=options, key=key, label_visibility="collapsed", help = help)
+            st.multiselect(
+                key, options=options, key=key, label_visibility="collapsed", help=help
+            )
         else:
             if key not in st.session_state:
                 st.session_state[key] = []
             st_tags(
-            label = "",
-            key=key,
-            value=st.session_state[key],  # Bind to session state
-            suggestions=options,
-        )
+                label="",
+                key=key,
+                value=st.session_state[key],  # Bind to session state
+                suggestions=options,
+            )
 
     elif "List[Dict[" in type:
         with st.expander(f"Add {key}"):
@@ -509,11 +565,13 @@ def create_element(label, placeholder="", help="", key="", value="", options=[],
         )
 
 
+def get_pdf(paper_url):
+
+    response = requests.get(paper_url)
+    return response.content
+
+
 def main():
-    if 'paper_pdf' not in st.session_state:
-        st.session_state['paper_pdf'] = None
-    if 'paper_url' not in st.session_state:
-        st.session_state['paper_url'] = None
     st.info(
         """
     This is a the Masader form to add datasets to [Masader](https://arbml.github.io/masader/) catalogue.
@@ -555,6 +613,7 @@ def main():
             placeholder="For example: https://raw.githubusercontent.com/ARBML/masader_form/refs/heads/main/shami.json",
         )
 
+
         if upload_file:
             json_data = json.load(upload_file)
             reload_config(json_data)
@@ -563,72 +622,80 @@ def main():
         else:
             reset_config()
 
-    elif options == "🤖 AI Annotation":
-        st.warning(
-            "‼️ AI annotation uses LLMs to extract the metadata form papers. However, this approach\
-                   is not reliable as LLMs can hellucinate and extract untrustworthy informations. \
-                   Make sure you revise the generated metadata before you submit."
-        )
-        paper_url = st.text_input("Insert arXiv or direct pdf link")
-        upload_pdf = st.file_uploader(
-            "Upload PDF of the paper",
-            help="You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets",
-        )
-
-        if paper_url:
-            if st.session_state['paper_url'] != paper_url:
-                response = requests.get(paper_url)
-                paper_pdf = response.content
-                st.session_state['paper_url'] = paper_url
-                st.session_state['paper_pdf'] = paper_pdf
-            if "arxiv" in paper_url:
-                load_json(MASADER_BOT_URL, link=paper_url)
-            else:
-                response = requests.get(paper_url)
-                response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
-                if response.headers.get("Content-Type") == "application/pdf":
-                    pdf = (
-                        paper_url.split("/")[-1],
-                        response.content,
-                        response.headers.get("Content-Type", "application/pdf"),
-                    )
-                    load_json(MASADER_BOT_URL, pdf=pdf)
-                else:
-                    st.error(
-                        f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
-                    )
-
-        elif upload_pdf:
-            # Prepare the file for sending
-            pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
-            st.session_state['paper_pdf'] = upload_pdf.getvalue()
-            load_json(MASADER_BOT_URL, pdf=pdf)
-        else:
-            reset_config()
+        paper_url = st.text_input("Insert paper direct link", key="paper_url")
     else:
-        st.session_state.show_form = True
+        if options == "🤖 AI Annotation":
+            st.warning(
+                "‼️ AI annotation uses LLMs to extract the metadata form papers. However, this approach\
+                    is not reliable as LLMs can hellucinate and extract untrustworthy informations. \
+                    Make sure you revise the generated metadata before you submit."
+            )
+        else:
+            st.session_state.show_form = True
+
+        paper_url = st.text_input("Insert paper direct link", key="paper_url")
+
+        if options == "🤖 AI Annotation":
+            upload_pdf = st.file_uploader(
+                "Upload PDF of the paper",
+                help="You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets",
+            )
+
+            if paper_url:
+                if "arxiv" in paper_url:
+                    load_json(MASADER_BOT_URL, link=paper_url)
+                else:
+                    response = requests.get(paper_url)
+                    response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
+                    if response.headers.get("Content-Type") == "application/pdf":
+                        pdf = (
+                            paper_url.split("/")[-1],
+                            response.content,
+                            response.headers.get("Content-Type", "application/pdf"),
+                        )
+                        load_json(MASADER_BOT_URL, pdf=pdf)
+                    else:
+                        st.error(
+                            f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
+                        )
+
+            elif upload_pdf:
+                # Prepare the file for sending
+                pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
+                load_json(MASADER_BOT_URL, pdf=pdf)
+            else:
+                reset_config()
 
     col1, col2 = st.columns(2)
     height = 1200
-    with col1:
-        if st.session_state.show_form:
+
+    if st.session_state.show_form:
+        with col2:
+            with st.container(height=height):
+                if st.session_state["paper_url"]:
+                    pdf_viewer(get_pdf(paper_url), height=height, render_text=True)
+                else:
+                    st.warning("No PDF found")
+
+        with col1:
             with st.container(height=height):
                 with st.form(key="dataset_form", border=False):
-                    create_element("GitHub username*", key="gh_username", value="zaidalyafeai")
+                    create_element(
+                        "GitHub username*", key="gh_username", value="zaidalyafeai"
+                    )
                     for key in columns:
-                        if 'options' in input_json[key]:
-                            options = input_json[key]['options']
+                        if "options" in input_json[key]:
+                            options = input_json[key]["options"]
                         else:
                             options = []
-                        create_element(key, options=options, key=key, help = input_json[key]['question'], type = input_json[key]['output_type'])
+                        create_element(
+                            key,
+                            options=options,
+                            key=key,
+                            help=input_json[key]["question"],
+                            type=input_json[key]["output_type"],
+                        )
                     final_state()
-
-    with col2:
-        with st.container(height=height):
-            if st.session_state['paper_pdf'] is not None:
-                pdf_viewer(st.session_state['paper_pdf'], height=height, render_text=True)
-            else:
-                st.warning("No PDF found")
 
 
 if __name__ == "__main__":
