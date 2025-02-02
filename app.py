@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st  # ignore
 import requests
 import re
 import json
@@ -8,15 +8,18 @@ from github import Github
 from git import Repo
 from datetime import date
 from constants import *
-
+from streamlit_tags import st_tags
 from dotenv import load_dotenv
+from streamlit_pdf_viewer import pdf_viewer
 
+# MASADER_BOT_URL = "http://0.0.0.0:8080/run"
 MASADER_BOT_URL = "https://masaderbot-production.up.railway.app/run"
 
 st.set_page_config(
     page_title="Masader Form",
     page_icon="📮",
     initial_sidebar_state="collapsed",
+    layout="wide",
 )
 "# 📮 :rainbow[Masader Form]"
 
@@ -24,6 +27,75 @@ load_dotenv()  # Load environment variables from a .env file
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GIT_USER_NAME = os.getenv("GIT_USER_NAME")
 GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL")
+
+
+import requests
+
+
+def fetch_json_with_token(url: str):
+    """
+    Fetch a JSON file from a GitHub URL using a personal access token.
+
+    Args:
+        url (str): The raw GitHub URL of the JSON file.
+        token (str): Your GitHub personal access token.
+
+    Returns:
+        dict: Parsed JSON content if successful.
+    """
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github.v3.raw",
+    }
+
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        return response.json()  # Parse the JSON content
+    else:
+        raise Exception(
+            f"Failed to fetch JSON. Status code: {response.status_code}, Message: {response.text}"
+        )
+
+
+# Example Usage
+mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr"])
+url = f"https://raw.githubusercontent.com/ARBML/masader_bot/main/schema/{mode}.json"
+
+try:
+    schema = fetch_json_with_token(url)
+    print(schema)
+except Exception as e:
+    print("Error:", str(e))
+
+evaluation_subsets = {}
+for c in schema:
+    if "validation_group" in schema[c]:
+        group = schema[c]["validation_group"]
+        if group not in evaluation_subsets:
+            evaluation_subsets[group] = []
+        evaluation_subsets[group].append(c)
+
+validation_columns = []
+for c in evaluation_subsets:
+    validation_columns += evaluation_subsets[c]
+
+NUM_VALIDATION_COLUMNS = len(validation_columns)
+
+column_types = {}
+for c in schema:
+    column_types[c] = schema[c]["output_type"]
+
+column_lens = {}
+for c in schema:
+    column_lens[c] = schema[c]["output_len"]
+required_columns = []
+print(column_lens)
+for c in schema:
+    if "N=0" not in schema[c]["output_len"] and "N>=0" not in schema[c]["output_len"]:  # find required columns using N=0
+        required_columns.append(c)
+
+columns = list(schema.keys())
 
 
 def validate_github(username):
@@ -41,7 +113,7 @@ def validate_url(url):
             return True
         else:
             return False
-    except requests.ConnectionError:
+    except:
         return False
 
 
@@ -81,78 +153,87 @@ def validate_comma_separated_number(number: str) -> bool:
 
 
 def update_session_config(json_data):
-    for key in json_data:
-        if key in ["Year"]:
-            try:
-                st.session_state[key] = int(json_data[key])
-            except:
-                st.session_state[key] = 2024
-        elif key in ["Collection Style", "Domain"]:
-            values = [val.strip() for val in json_data[key].split(",")]
-            acc_values = []
+    for column in json_data:
+        type = column_types[column]
+        if type == "List[str]":
+            values = json_data[column]
+            st.session_state[column] = values
 
-            # if some values are not legitimate, use other instead
-            for value in values:
-                if value in column_options[key].split(","):
-                    acc_values.append(value)
-
-            if len(values) > len(acc_values):
-                if "other" not in acc_values:
-                    acc_values.append("other")
-
-            st.session_state[key] = acc_values
-        elif key == "Tasks":
-            tasks = []
-            other_tasks = []
-            for task in [task.strip() for task in json_data[key].split(",")]:
-                if task not in column_options["Tasks"].split(","):
-                    other_tasks.append(task)
-                else:
-                    tasks.append(task)
-
-            if len(other_tasks):
-                st.session_state["Other Tasks"] = ",".join(other_tasks)
-
-            if len(tasks):
-                st.session_state["Tasks"] = tasks
-
-        elif key == "Subsets":
-            for i, subset in enumerate(json_data[key]):
-                for subkey in subset:
-                    st.session_state[f"subset_{i}_{subkey.lower()}"] = json_data[key][
-                        i
-                    ][subkey]
+        elif "List[Dict[" in type:
+            subsets = json_data[column]
+            keys = type.replace("List[Dict[", "").replace("]]", "").split(",")
+            keys = [key.strip() for key in keys]
+            i = 0
+            nostop = True
+            while nostop:
+                for key in keys:
+                    if f"{column}_{i}_{key}" in st.session_state:
+                        del st.session_state[f"{column}_{i}_{key}"]
+                    else:
+                        nostop = False
+                        break
+                i += 1
+            if len(subsets) > 0:
+                for i, subset in enumerate(subsets):
+                    for subkey in subset:
+                        st.session_state[f"{column}_{i}_{subkey}"] = subset[subkey]
+            else:
+                for subkey in keys:
+                    if subkey in schema:
+                        if "options" in schema[subkey]:
+                            st.session_state[f"{column}_0_{subkey}"] = schema[subkey][
+                                "options"
+                            ][-1]
+                        else:
+                            st.session_state[f"{column}_0_{subkey}"] = ""
         else:
-            st.session_state[key] = json_data[key].strip()
+            st.session_state[column] = json_data[column]
 
 
 def reload_config(json_data):
     if "metadata" in json_data:
         json_data = json_data["metadata"]
+    # make sure all the keys exist in the json data
+
+    for key in list(json_data.keys()):
+        if key not in columns:
+            print("deleting", key)
+            del json_data[key]
+    try:
+        st.session_state.paper_url = json_data["Paper Link"]
+    except Exception as e:
+        print(e)
+        pass
     update_session_config(json_data)
     st.session_state.show_form = True
 
 
-def render_form():
+def render_list_dict(c, type):
+    # List[Dict[Name, Volume, Unit, Dialect]]
+    type = type.replace("List[Dict[", "")
+    type = type.replace("]]", "")
+    keys = [key.strip() for key in type.split(",")]
     i = 0
 
     while True:
-        col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
-        with col1:
-            name = st.text_input("Name:", key=f"subset_{i}_name")
-        with col3:
-            volume = st.text_input("Volume", key=f"subset_{i}_volume")
-        with col2:
-            dialect = st.selectbox(
-                "Dialect",
-                column_options["Dialect"].split(","),
-                key=f"subset_{i}_dialect",
-            )
-        with col4:
-            unit = st.selectbox(
-                "Unit", column_options["Unit"].split(","), key=f"subset_{i}_unit"
-            )
-        if name:
+        cols = st.columns(len(keys))
+        first_elem = None
+        for j, subkey in enumerate(keys):
+            elem = None
+            with cols[j]:
+                if subkey in schema:
+                    if "options" in schema[subkey]:
+                        options = schema[subkey]["options"]
+                        elem = st.selectbox(
+                            subkey, options=options, key=f"{c}_{i}_{subkey}"
+                        )
+                    else:
+                        elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
+                else:
+                    elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
+            if j == 0:
+                first_elem = elem
+        if first_elem:
             i += 1
         else:
             break
@@ -282,16 +363,51 @@ def load_json(url, link="", pdf=None):
         # Parse the JSON content
         json_data = response.json()
         reload_config(json_data)
-        return True
+        return json_data
     else:
         st.error(response.text)
-    return False
+    return None
+
+
+def create_default_json():
+    default_json = {}
+    for column in columns:
+        type = column_types[column]
+        if "options" in schema[column]:
+            if type in ["str"]:
+                default_json[column] = schema[column]["options"][-1]
+            elif type == "List[str]":
+                default_json[column] = [schema[column]["options"][-1]]
+            else:
+                raise ()
+        elif type == "List[str]":  # no options
+            default_json[column] = []
+        elif "List[Dict" in type:
+            default_json[column] = []
+        elif type == "date[year]":
+            default_json[column] = date.today().year
+        elif type == "int":
+            default_json[column] = 0
+        elif type == "float":
+            default_json[column] = 0.0
+        else:
+            default_json[column] = ""
+    return default_json
 
 
 def reset_config():
-    with open("default.json", "r") as f:
-        reload_config(json.load(f))
+    default_json = create_default_json()
+    reload_config(default_json)
     st.session_state.show_form = False
+
+
+def create_name(name):
+    if " " in name:
+        # first name of each word
+        name = name.split(" ")
+        name = [n[0] for n in name]
+        name = "".join(name)
+    return name.lower()
 
 
 @st.fragment()
@@ -306,164 +422,161 @@ def final_state():
     if submit or save:
         if not validate_github(st.session_state["gh_username"].strip()):
             st.error("Please enter a valid GitHub username.")
-        elif not validate_dataname(st.session_state["Name"]):
-            st.error("Please enter a valid dataset name.")
-        elif not validate_url(st.session_state["Link"]):
-            st.error("Please enter a valid repository link.")
-        elif not st.session_state["License"].strip():
-            st.error("Please select a valid license.")
-        elif not st.session_state["Dialect"]:
-            st.error("Please enter a valid dialect.")
-        elif not st.session_state["Domain"]:
-            st.error("Please select a valid domain.")
-        elif not st.session_state["Collection Style"]:
-            st.error("Please select a valid collection style")
-        elif (
-            not st.session_state["Description"].strip()
-            or len(st.session_state["Description"]) < 10
-        ):
-            st.error("Please enter a non empty (detailed) description of the dataset")
-        elif not validate_comma_separated_number(st.session_state["Volume"].strip()):
-            st.error("Please enter a valid volume. for example 1,000")
-        elif not st.session_state["Unit"].strip():
-            st.error("Please select a valid unit.")
-        elif not st.session_state["Host"].strip():
-            st.error("Please select a valid host.")
-        elif not st.session_state["Tasks"]:
-            st.error("Please select the Tasks.")
-        elif not st.session_state["Added By"].strip():
-            st.error("Please enter your full name.")
+        for key in required_columns:
+            value = st.session_state[key]
+            type = column_types[key]
+            if type in ["List[str]", "List[Dict]"]:
+                if len(value) == 0:
+                    st.error(f"Please enter a valid {key}.")
+                    break
+            elif type == "str":
+                if value == "":
+                    st.error(f"Please enter a valid {key}.")
+                    break
+            elif type == "url":
+                if not validate_url(value):
+                    st.error(f"Please enter a valid {key}.")
+                    break
+            elif type == "int":
+                if value == 0:
+                    st.error(f"Please enter a valid {key}.")
+                    break
+            else:
+                continue
         else:
-            config = create_json()
+            config = create_json(use_annotations_paper=False)
             if submit:
                 update_pr(config)
             else:
-                save_path = st.text_input(
-                    "Save Path",
-                    value=f"/Users/zaidalyafeai/Documents/Development/masader_bot/validset/{st.session_state['Name'].lower()}.json",
-                    help="Enter the directory path to save the JSON file",
-                )
-                if save_path:
-                    with open(save_path, "w") as f:
-                        json.dump(config, f, indent=4)
-                    st.success(f"Form saved successfully to {save_path}")
+                save_path = f"/Users/zaidalyafeai/Documents/Development/masader_bot/evals/{mode}/testset/{create_name(st.session_state['Name'])}.json"
+                with open(save_path, "w") as f:
+                    json.dump(config, f, indent=4)
+                st.success(f"Form saved successfully to [{save_path}]({save_path})")
 
 
-def create_json():
+def create_json(use_annotations_paper=False):
     config = {}
-    columns = [
-        "Name",
-        "Subsets",
-        "HF Link",
-        "Link",
-        "License",
-        "Year",
-        "Language",
-        "Dialect",
-        "Domain",
-        "Form",
-        "Collection Style",
-        "Description",
-        "Volume",
-        "Unit",
-        "Ethical Risks",
-        "Provider",
-        "Derived From",
-        "Paper Title",
-        "Paper Link",
-        "Script",
-        "Tokenized",
-        "Host",
-        "Access",
-        "Cost",
-        "Test Split",
-        "Tasks",
-        "Venue Title",
-        "Citations",
-        "Venue Type",
-        "Venue Name",
-        "Authors",
-        "Affiliations",
-        "Abstract",
-        "Added By",
-    ]
-    for key in columns:
-        if key == "Subsets":
-            config["Subsets"] = []
+    if use_annotations_paper:
+        config["annotations_from_paper"] = {}
+    for column in columns:
+        type = column_types[column]
+        if "List[Dict[" in type:
+            config[column] = []
             i = 0
             while True:
                 subset = {}
-                if f"subset_{i}_name" in st.session_state:
-                    if st.session_state[f"subset_{i}_name"] != "":
-                        subset["Name"] = st.session_state[f"subset_{i}_name"]
-                        subset["Volume"] = st.session_state[f"subset_{i}_volume"]
-                        subset["Dialect"] = st.session_state[f"subset_{i}_dialect"]
-                        subset["Unit"] = st.session_state[f"subset_{i}_unit"]
-                        config["Subsets"].append(subset)
-                        i += 1
-                        continue
-                break
-        elif key in ["Collection Style", "Domain"]:
-            config[key] = ",".join(st.session_state[key])
-        elif key == "Tasks":
-            tasks = st.session_state[key]
-            if st.session_state["Other Tasks"].strip() != "":
-                tasks += st.session_state["Other Tasks"].split(",")
-            config[key] = ",".join(tasks)
+                matched_subsets = [s for s in st.session_state if f"subset_{i}_" in s]
+                if len(matched_subsets):
+                    for subset_key_name in matched_subsets:
+                        subset_name = subset_key_name.split("_")[-1]
+                        subset[subset_name] = st.session_state[subset_key_name]
+                    config[column].append(subset)
+                    i += 1
+                else:
+                    break
         else:
-            config[key] = st.session_state[key]
+            config[column] = st.session_state[column]
+            if use_annotations_paper:
+                if column in ["Citations", "Added By"]:
+                    config["annotations_from_paper"][column] = -1
+                else:
+                    config["annotations_from_paper"][column] = (
+                        1 if st.session_state[f"annot_{column}"] else 0
+                    )
     return config
 
 
-def create_element(label, placeholder="", help="", key="", value="", options=[]):
-    st.text(label)
-    if key in [
-        "Language",
-        "Form",
-        "Unit",
-        "Ethical Risks",
-        "Script",
-        "Access",
-        "Test Split",
-        "Venue Type",
-    ]:
-        st.radio(key, options=options, key=key, label_visibility="collapsed")
-    elif key in ["License", "Dialect", "Host"]:
-        st.selectbox(key, options=options, key=key, label_visibility="collapsed")
-    elif key in ["Domain", "Collection Style", "Tasks"]:
-        if key == "Collection Style":
-            with st.expander("See description"):
-                st.caption(
-                    """
-                    - **crawling** the data has been collected using scripts to collect the data
-                    - **human annotaiton** the data has been labeled by humans
-                    - **machine annotation** the data has been labeled by a software i.e. MT, OCR, ...
-                    - **LLM Generated** LLMs have been used to collect or annotate the data
-                    - **manual curation** the data has been created manually. 
-                """
-                )
-        st.multiselect(key, options=options, key=key, label_visibility="collapsed")
-    elif key in ["Description", "Abstract", "Affiliations", "Authors"]:
-        st.text_area(
-            key,
-            key=key,
-            placeholder=placeholder,
-            help=help,
-            label_visibility="collapsed",
-        )
+def create_element(
+    label,
+    placeholder="",
+    help="",
+    key="",
+    value="",
+    options=[],
+    type="str",
+    use_annotations_paper=False,
+):
+    if label in required_columns:
+        st.write(f"{label}*")
     else:
-        st.text_input(
+        st.write(label)
+    if use_annotations_paper:
+        st.toggle(
+            f"Paper annotated",
+            key=f"annot_{key}",
+            value=True,
+        )
+    if key in schema:
+        if "option_description" in schema[key]:
+            desc = ""
+            for option in schema[key]["option_description"]:
+                desc += f"- **{option}**: {schema[key]['option_description'][option]}\n"
+            if help == "":
+                help = desc
+    if type == "float":
+        st.number_input(
             key,
             key=key,
-            placeholder=placeholder,
-            help=help,
-            value=value,
             label_visibility="collapsed",
+            step=0.1,
         )
+    elif type in ["int", "date[year]"]:
+        st.number_input(key, key=key, label_visibility="collapsed", step=1, help=help)
+    elif (len(options) > 0 and len(options) <= 5) and type == "str":
+        st.radio(key, options=options, key=key, label_visibility="collapsed", help=help)
+    elif len(options) > 0 and type == "str":
+        st.selectbox(
+            key, options=options, key=key, label_visibility="collapsed", help=help
+        )
+    elif type == "List[str]":
+        if len(options) > 0 and ("len(options)" in column_lens[key]):
+            st.multiselect(
+                key, options=options, key=key, label_visibility="collapsed", help=help
+            )
+        else:
+            if key not in st.session_state:
+                st.session_state[key] = []
+            st_tags(
+                label="",
+                key=key,
+                value=st.session_state[key],  # Bind to session state
+                suggestions=options,
+            )
+
+    elif "List[Dict[" in type:
+        with st.expander(f"Add {key}"):
+            st.caption(
+                "Use this field to add dialect subsets of the dataset. For example if the dataset has 1,000 sentences in the Yemeni dialect.\
+                        For example take a look at the [shami subsets](https://github.com/ARBML/masader/tree/main/datasets/shami.json)."
+            )
+            render_list_dict(key, type)
+    else:
+        if key in column_lens and "N>50" in column_lens[key]:
+            st.text_area(
+                key,
+                key=key,
+                placeholder=placeholder,
+                help=help,
+                label_visibility="collapsed",
+            )
+        else:
+            st.text_input(
+                key,
+                key=key,
+                placeholder=placeholder,
+                help=help,
+                value=value,
+                label_visibility="collapsed",
+            )
+
+
+def get_pdf(paper_url):
+
+    response = requests.get(paper_url)
+    return response.content
 
 
 def main():
-
     st.info(
         """
     This is a the Masader form to add datasets to [Masader](https://arbml.github.io/masader/) catalogue.
@@ -513,254 +626,80 @@ def main():
         else:
             reset_config()
 
-    elif options == "🤖 AI Annotation":
-        st.warning(
-            "‼️ AI annotation uses LLMs to extract the metadata form papers. However, this approach\
-                   is not reliable as LLMs can hellucinate and extract untrustworthy informations. \
-                   Make sure you revise the generated metadata before you submit."
-        )
-        paper_url = st.text_input("Insert arXiv or direct pdf link")
-        upload_pdf = st.file_uploader(
-            "Upload PDF of the paper",
-            help="You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets",
-        )
-
-        if paper_url:
-            if "arxiv" in paper_url:
-                load_json(MASADER_BOT_URL, link=paper_url)
-            else:
-                response = requests.get(paper_url)
-                response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
-                if response.headers.get("Content-Type") == "application/pdf":
-                    pdf = (
-                        paper_url.split("/")[-1],
-                        response.content,
-                        response.headers.get("Content-Type", "application/pdf"),
-                    )
-                    load_json(MASADER_BOT_URL, pdf=pdf)
-                else:
-                    st.error(
-                        f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
-                    )
-
-        elif upload_pdf:
-            # Prepare the file for sending
-            pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
-            load_json(MASADER_BOT_URL, pdf=pdf)
-        else:
-            reset_config()
+        paper_url = st.text_input("Insert paper direct link", key="paper_url")
     else:
-        st.session_state.show_form = True
+        if options == "🤖 AI Annotation":
+            st.warning(
+                "‼️ AI annotation uses LLMs to extract the metadata form papers. However, this approach\
+                    is not reliable as LLMs can hellucinate and extract untrustworthy informations. \
+                    Make sure you revise the generated metadata before you submit."
+            )
+        else:
+            st.session_state.show_form = True
+
+        paper_url = st.text_input("Insert paper direct link", key="paper_url")
+
+        if options == "🤖 AI Annotation":
+            upload_pdf = st.file_uploader(
+                "Upload PDF of the paper",
+                help="You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets",
+            )
+
+            if paper_url:
+                if "arxiv" in paper_url:
+                    load_json(MASADER_BOT_URL, link=paper_url)
+                else:
+                    response = requests.get(paper_url)
+                    response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
+                    if response.headers.get("Content-Type") == "application/pdf":
+                        pdf = (
+                            paper_url.split("/")[-1],
+                            response.content,
+                            response.headers.get("Content-Type", "application/pdf"),
+                        )
+                        load_json(MASADER_BOT_URL, pdf=pdf)
+                    else:
+                        st.error(
+                            f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
+                        )
+
+            elif upload_pdf:
+                # Prepare the file for sending
+                pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
+                load_json(MASADER_BOT_URL, pdf=pdf)
+            else:
+                reset_config()
+
+    col1, col2 = st.columns(2)
+    height = 1200
 
     if st.session_state.show_form:
-        with st.form(key="dataset_form"):
-            create_element("GitHub username*", key="gh_username", value="zaidalyafeai")
+        with col2:
+            with st.container(height=height):
+                if st.session_state["paper_url"]:
+                    pdf_viewer(get_pdf(paper_url), height=height, render_text=True)
+                else:
+                    st.warning("No PDF found")
 
-            create_element(
-                "Name of the dataset*",
-                placeholder="Use a representative name of the dataset.",
-                help="For example CALLHOME: Egyptian Arabic Speech Translation Corpus",
-                key="Name",
-            )
-
-            with st.expander("Add dilaect subsets"):
-                st.caption(
-                    "Use this field to add dialect subsets of the dataset. For example if the dataset has 1,000 sentences in the Yemeni dialect.\
-                           For example take a look at the [shami subsets](https://github.com/ARBML/masader/tree/main/datasets/shami.json)."
-                )
-                render_form()
-
-            # Links
-            create_element(
-                "Link*", placeholder="The link must be accessible", key="Link"
-            )
-
-            create_element(
-                "Huggingface Link",
-                placeholder="for example https://huggingface.co/datasets/labr",
-                help="for example https://huggingface.co/datasets/labr",
-                key="HF Link",
-            )
-
-            # Dataset Properties
-            create_element(
-                "License*", options=column_options["License"].split(","), key="License"
-            )
-
-            current_year = date.today().year
-            st.number_input(
-                "Year*",
-                min_value=2000,
-                max_value=current_year,
-                help="Year of publishing the dataset/paper",
-                key="Year",
-            )
-
-            create_element(
-                "Language*",
-                options=column_options["Language"].split(","),
-                key="Language",
-            )
-
-            create_element(
-                "Dialect*",
-                options=column_options["Dialect"].split(","),
-                help="Used mixed if the dataset contains multiple dialects",
-                key="Dialect",
-            )
-
-            create_element(
-                "Domain*", options=column_options["Domain"].split(","), key="Domain"
-            )
-
-            create_element(
-                "Form*", options=column_options["Form"].split(","), key="Form"
-            )
-
-            create_element(
-                "Collection Style*",
-                options=column_options["Collection Style"].split(","),
-                key="Collection Style",
-            )
-
-            create_element(
-                "Description*",
-                placeholder="Description about the dataset and its contents.",
-                help="brief description of the dataset",
-                key="Description",
-            )
-
-            # Volume and Units
-            create_element(
-                "Volume*",
-                placeholder="For example 1,000.",
-                help="How many samples are in the dataset. Please don't use abbreviations like 10K",
-                key="Volume",
-            )
-
-            create_element(
-                "Unit*",
-                options=column_options["Unit"].split(","),
-                help="tokens usually used for ner, pos tagging, etc. sentences for sentiment analysis, documents for text modelling tasks",
-                key="Unit",
-            )
-
-            create_element(
-                "Ethical Risks",
-                options=column_options["Ethical Risks"].split(","),
-                help="social media datasets are considered mid risks as they might release personal information, others might contain hate speech as well so considered as high risk",
-                key="Ethical Risks",
-            )
-
-            create_element(
-                "Provider",
-                placeholder="Name of institution i.e. NYU Abu Dhabi",
-                key="Provider",
-            )
-
-            create_element(
-                "Derived From",
-                placeholder="What is the source dataset, i.e. Common Crawl",
-                key="Derived From",
-            )
-            # Paper Information
-            create_element(
-                "Paper Title", placeholder="Full title of the paper", key="Paper Title"
-            )
-
-            create_element(
-                "Paper Link",
-                placeholder="Link to the pdf i.e. https://arxiv.org/pdf/2110.06744.pdf",
-                key="Paper Link",
-            )
-
-            # Technical Details
-            create_element(
-                "Script*", options=column_options["Script"].split(","), key="Script"
-            )
-
-            create_element(
-                "Tokenized*",
-                options=column_options["Tokenized"].split(","),
-                help="Is the dataset tokenized i.e. الرجل = ال رجل",
-                key="Tokenized",
-            )
-
-            create_element(
-                "Host*",
-                options=column_options["Host"].split(","),
-                help="The name of the repository that hosts the data. Use other if not in the options.",
-                key="Host",
-            )
-
-            create_element(
-                "Access*", options=column_options["Access"].split(","), key="Access"
-            )
-
-            create_element(
-                "Cost",
-                placeholder="If the access is With-Fee inser the cost, i.e. 1750 $",
-                help="For example 1750 $",
-                key="Cost",
-            )
-
-            create_element(
-                "Test split*",
-                options=column_options["Test Split"].split(","),
-                help="Does the dataset have validation / test split",
-                key="Test Split",
-            )
-
-            create_element(
-                "Tasks*", options=column_options["Tasks"].split(","), key="Tasks"
-            )
-
-            create_element(
-                "Other Tasks*",
-                placeholder="Other tasks that don't exist in the Tasks options.",
-                help="Make sure the tasks don't appear in the Tasks field",
-                key="Other Tasks",
-            )
-
-            create_element(
-                "Venue Title", placeholder="Venue shortcut i.e. ACL", key="Venue Title"
-            )
-
-            # Venue Type
-            create_element(
-                "Venue Type",
-                options=column_options["Venue Type"].split(","),
-                help="Select the type of venue",
-                key="Venue Type",
-            )
-            # Venue Name
-            create_element(
-                "Venue Name",
-                placeholder="Full name i.e. Association of Computational Linguistics",
-                key="Venue Name",
-            )
-
-            # Authors
-            create_element(
-                "Authors", placeholder="Add all authors split by comma", key="Authors"
-            )
-
-            # Affiliations
-            create_element(
-                "Affiliations", placeholder="Enter affiliations", key="Affiliations"
-            )
-
-            # Abstract
-            create_element(
-                "Abstract",
-                placeholder="Abstract of the published paper",
-                key="Abstract",
-            )
-
-            create_element(
-                "Full Name*", placeholder="Please Enter your full name", key="Added By"
-            )
-            final_state()
+        with col1:
+            with st.container(height=height):
+                with st.form(key="dataset_form", border=False):
+                    create_element(
+                        "GitHub username*", key="gh_username", value="zaidalyafeai"
+                    )
+                    for key in columns:
+                        if "options" in schema[key]:
+                            options = schema[key]["options"]
+                        else:
+                            options = []
+                        create_element(
+                            key,
+                            options=options,
+                            key=key,
+                            help=schema[key]["question"],
+                            type=schema[key]["output_type"],
+                        )
+                    final_state()
 
 
 if __name__ == "__main__":
