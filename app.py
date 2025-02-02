@@ -63,7 +63,9 @@ for c in schema:
 required_columns = []
 print(column_lens)
 for c in schema:
-    if "N=0" not in schema[c]["output_len"] and "N>=0" not in schema[c]["output_len"]:  # find required columns using N=0
+    if (
+        "N=0" not in schema[c]["output_len"] and "N>=0" not in schema[c]["output_len"]
+    ):  # find required columns using N=0
         required_columns.append(c)
 
 columns = list(schema.keys())
@@ -380,49 +382,44 @@ def create_name(name):
         name = "".join(name)
     return name.lower()
 
+@st.fragment
+def download_json():
+    with st.spinner("Downloading ..."):
+        config = create_json()
+        st.download_button(
+            label="Save",
+            data=json.dumps(config, indent=4),
+            file_name="data.json",
+            mime="application/json",
+        )
 
-@st.fragment()
-def final_state():
-    col1, col2 = st.columns(2)
-
-    with col1:
-        submit = st.form_submit_button("Submit")
-    with col2:
-        save = st.form_submit_button("Save")
-
-    if submit or save:
-        if not validate_github(st.session_state["gh_username"].strip()):
-            st.error("Please enter a valid GitHub username.")
-        for key in required_columns:
-            value = st.session_state[key]
-            type = column_types[key]
-            if type in ["List[str]", "List[Dict]"]:
-                if len(value) == 0:
-                    st.error(f"Please enter a valid {key}.")
-                    break
-            elif type == "str":
-                if value == "":
-                    st.error(f"Please enter a valid {key}.")
-                    break
-            elif type == "url":
-                if not validate_url(value):
-                    st.error(f"Please enter a valid {key}.")
-                    break
-            elif type == "int":
-                if value == 0:
-                    st.error(f"Please enter a valid {key}.")
-                    break
-            else:
-                continue
+def validate_columns():
+    if not validate_github(st.session_state["gh_username"].strip()):
+        st.error("Please enter a valid GitHub username.")
+    for key in required_columns:
+        value = st.session_state[key]
+        type = column_types[key]
+        if type in ["List[str]", "List[Dict]"]:
+            if len(value) == 0:
+                st.error(f"Please enter a valid {key}.")
+                break
+        elif type == "str":
+            if value == "":
+                st.error(f"Please enter a valid {key}.")
+                break
+        elif type == "url":
+            if not validate_url(value):
+                st.error(f"Please enter a valid {key}.")
+                break
+        elif type == "int":
+            if value == 0:
+                st.error(f"Please enter a valid {key}.")
+                break
         else:
-            config = create_json(use_annotations_paper=False)
-            if submit:
-                update_pr(config)
-            else:
-                save_path = f"/Users/zaidalyafeai/Documents/Development/masader_bot/evals/{mode}/testset/{create_name(st.session_state['Name'])}.json"
-                with open(save_path, "w") as f:
-                    json.dump(config, f, indent=4)
-                st.success(f"Form saved successfully to [{save_path}]({save_path})")
+            continue
+    else:
+        return True
+    return False
 
 
 def create_json(use_annotations_paper=False):
@@ -670,7 +667,13 @@ def main():
                             help=schema[key]["question"],
                             type=schema[key]["output_type"],
                         )
-                    final_state()
+                    submit = st.form_submit_button("Submit")
+
+                    if submit:
+                        if validate_columns():
+                            config = create_json()
+                            update_pr(config)
+                download_json()
 
 
 if __name__ == "__main__":
