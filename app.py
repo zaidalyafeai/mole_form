@@ -12,8 +12,8 @@ from streamlit_tags import st_tags
 from dotenv import load_dotenv
 from streamlit_pdf_viewer import pdf_viewer
 
-# MASADER_BOT_URL = "http://0.0.0.0:8080/run"
-MASADER_BOT_URL = "https://masaderbot-production.up.railway.app/run"
+# MASADER_BOT_URL = "http://0.0.0.0:8080"
+MASADER_BOT_URL = "https://masaderbot-production.up.railway.app"
 
 st.set_page_config(
     page_title="Masader Form",
@@ -31,40 +31,11 @@ GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL")
 
 import requests
 
-
-def fetch_json_with_token(url: str):
-    """
-    Fetch a JSON file from a GitHub URL using a personal access token.
-
-    Args:
-        url (str): The raw GitHub URL of the JSON file.
-        token (str): Your GitHub personal access token.
-
-    Returns:
-        dict: Parsed JSON content if successful.
-    """
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3.raw",
-    }
-
-    response = requests.get(url, headers=headers)
-
-    if response.status_code == 200:
-        return response.json()  # Parse the JSON content
-    else:
-        raise Exception(
-            f"Failed to fetch JSON. Status code: {response.status_code}, Message: {response.text}"
-        )
-
-
 # Example Usage
 mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr"])
-url = f"https://raw.githubusercontent.com/ARBML/masader_bot/main/schema/{mode}.json"
 
 try:
-    schema = fetch_json_with_token(url)
-    print(schema)
+    schema = requests.post(f"{MASADER_BOT_URL}/schema", data={"name": mode}).json()
 except Exception as e:
     print("Error:", str(e))
 
@@ -350,7 +321,7 @@ def update_pr(new_dataset):
 
 
 def load_json(url, link="", pdf=None):
-    # Make the GET request to fetch the JSON data
+    url = f"{url}/run"
     if link != "":
         response = requests.post(url, data={"link": link})
     elif pdf:
