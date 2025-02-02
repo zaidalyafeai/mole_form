@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st  # ignore
 import requests
 import re
 import json
@@ -62,14 +62,15 @@ mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr"])
 url = f"https://raw.githubusercontent.com/ARBML/masader_bot/main/schema/{mode}.json"
 
 try:
-    input_json = fetch_json_with_token(url)
+    schema = fetch_json_with_token(url)
+    print(schema)
 except Exception as e:
     print("Error:", str(e))
 
 evaluation_subsets = {}
-for c in input_json:
-    if "validation_group" in input_json[c]:
-        group = input_json[c]["validation_group"]
+for c in schema:
+    if "validation_group" in schema[c]:
+        group = schema[c]["validation_group"]
         if group not in evaluation_subsets:
             evaluation_subsets[group] = []
         evaluation_subsets[group].append(c)
@@ -81,15 +82,19 @@ for c in evaluation_subsets:
 NUM_VALIDATION_COLUMNS = len(validation_columns)
 
 column_types = {}
-for c in input_json:
-    column_types[c] = input_json[c]["output_type"]
+for c in schema:
+    column_types[c] = schema[c]["output_type"]
 
+column_lens = {}
+for c in schema:
+    column_lens[c] = schema[c]["output_len"]
 required_columns = []
-for c in input_json:
-    if input_json[c]["required"]:
+print(column_lens)
+for c in schema:
+    if "N=0" not in schema[c]["output_len"] and "N>=0" not in schema[c]["output_len"]:  # find required columns using N=0
         required_columns.append(c)
 
-columns = list(input_json.keys())
+columns = list(schema.keys())
 
 
 def validate_github(username):
@@ -173,11 +178,11 @@ def update_session_config(json_data):
                         st.session_state[f"{column}_{i}_{subkey}"] = subset[subkey]
             else:
                 for subkey in keys:
-                    if subkey in input_json:
-                        if "options" in input_json[subkey]:
-                            st.session_state[f"{column}_0_{subkey}"] = input_json[
-                                subkey
-                            ]["options"][-1]
+                    if subkey in schema:
+                        if "options" in schema[subkey]:
+                            st.session_state[f"{column}_0_{subkey}"] = schema[subkey][
+                                "options"
+                            ][-1]
                         else:
                             st.session_state[f"{column}_0_{subkey}"] = ""
         else:
@@ -194,7 +199,7 @@ def reload_config(json_data):
             print("deleting", key)
             del json_data[key]
     try:
-        st.session_state.paper_url = json_data['Paper Link']
+        st.session_state.paper_url = json_data["Paper Link"]
     except Exception as e:
         print(e)
         pass
@@ -215,9 +220,9 @@ def render_list_dict(c, type):
         for j, subkey in enumerate(keys):
             elem = None
             with cols[j]:
-                if subkey in input_json:
-                    if "options" in input_json[subkey]:
-                        options = input_json[subkey]["options"]
+                if subkey in schema:
+                    if "options" in schema[subkey]:
+                        options = schema[subkey]["options"]
                         elem = st.selectbox(
                             subkey, options=options, key=f"{c}_{i}_{subkey}"
                         )
@@ -367,11 +372,11 @@ def create_default_json():
     default_json = {}
     for column in columns:
         type = column_types[column]
-        if "options" in input_json[column]:
+        if "options" in schema[column]:
             if type in ["str"]:
-                default_json[column] = input_json[column]["options"][-1]
+                default_json[column] = schema[column]["options"][-1]
             elif type == "List[str]":
-                default_json[column] = [input_json[column]["options"][-1]]
+                default_json[column] = [schema[column]["options"][-1]]
             else:
                 raise ()
         elif type == "List[str]":  # no options
@@ -500,13 +505,11 @@ def create_element(
             key=f"annot_{key}",
             value=True,
         )
-    if key in input_json:
-        if "option_description" in input_json[key]:
+    if key in schema:
+        if "option_description" in schema[key]:
             desc = ""
-            for option in input_json[key]["option_description"]:
-                desc += (
-                    f"- **{option}**: {input_json[key]['option_description'][option]}\n"
-                )
+            for option in schema[key]["option_description"]:
+                desc += f"- **{option}**: {schema[key]['option_description'][option]}\n"
             if help == "":
                 help = desc
     if type == "float":
@@ -516,7 +519,7 @@ def create_element(
             label_visibility="collapsed",
             step=0.1,
         )
-    if type in ["int", "date[year]"]:
+    elif type in ["int", "date[year]"]:
         st.number_input(key, key=key, label_visibility="collapsed", step=1, help=help)
     elif (len(options) > 0 and len(options) <= 5) and type == "str":
         st.radio(key, options=options, key=key, label_visibility="collapsed", help=help)
@@ -525,7 +528,7 @@ def create_element(
             key, options=options, key=key, label_visibility="collapsed", help=help
         )
     elif type == "List[str]":
-        if len(options) > 0:
+        if len(options) > 0 and ("len(options)" in column_lens[key]):
             st.multiselect(
                 key, options=options, key=key, label_visibility="collapsed", help=help
             )
@@ -546,23 +549,24 @@ def create_element(
                         For example take a look at the [shami subsets](https://github.com/ARBML/masader/tree/main/datasets/shami.json)."
             )
             render_list_dict(key, type)
-    elif key in ["Description", "Abstract"]:
-        st.text_area(
-            key,
-            key=key,
-            placeholder=placeholder,
-            help=help,
-            label_visibility="collapsed",
-        )
-    elif type in ["str", "url"]:
-        st.text_input(
-            key,
-            key=key,
-            placeholder=placeholder,
-            help=help,
-            value=value,
-            label_visibility="collapsed",
-        )
+    else:
+        if key in column_lens and "N>50" in column_lens[key]:
+            st.text_area(
+                key,
+                key=key,
+                placeholder=placeholder,
+                help=help,
+                label_visibility="collapsed",
+            )
+        else:
+            st.text_input(
+                key,
+                key=key,
+                placeholder=placeholder,
+                help=help,
+                value=value,
+                label_visibility="collapsed",
+            )
 
 
 def get_pdf(paper_url):
@@ -612,7 +616,6 @@ def main():
             "Path to json",
             placeholder="For example: https://raw.githubusercontent.com/ARBML/masader_form/refs/heads/main/shami.json",
         )
-
 
         if upload_file:
             json_data = json.load(upload_file)
@@ -684,16 +687,16 @@ def main():
                         "GitHub username*", key="gh_username", value="zaidalyafeai"
                     )
                     for key in columns:
-                        if "options" in input_json[key]:
-                            options = input_json[key]["options"]
+                        if "options" in schema[key]:
+                            options = schema[key]["options"]
                         else:
                             options = []
                         create_element(
                             key,
                             options=options,
                             key=key,
-                            help=input_json[key]["question"],
-                            type=input_json[key]["output_type"],
+                            help=schema[key]["question"],
+                            type=schema[key]["output_type"],
                         )
                     final_state()
 
