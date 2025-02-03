@@ -382,6 +382,7 @@ def create_name(name):
         name = "".join(name)
     return name.lower()
 
+
 @st.fragment
 def download_json():
     with st.spinner("Downloading ..."):
@@ -392,6 +393,7 @@ def download_json():
             file_name="data.json",
             mime="application/json",
         )
+
 
 def validate_columns():
     if not validate_github(st.session_state["gh_username"].strip()):
@@ -538,8 +540,20 @@ def create_element(
             )
 
 
-def get_pdf(paper_url):
+def fix_arxiv_link(link):
+    for version in range(1, 5):
+        link = link.replace(f"v{version}", "")
+    if link.endswith(".pdf"):
+        return link
+    if link.endswith("/"):
+        link = link[:-1]
+    _id = link.split("/")[-1]
+    return f"https://arxiv.org/pdf/{_id}.pdf"
 
+
+def get_pdf(paper_url):
+    if "arxiv.org" in paper_url:
+        paper_url = fix_arxiv_link(paper_url)
     response = requests.get(paper_url)
     return response.content
 
