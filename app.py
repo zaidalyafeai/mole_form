@@ -11,9 +11,12 @@ from constants import *
 from streamlit_tags import st_tags
 from dotenv import load_dotenv
 from streamlit_pdf_viewer import pdf_viewer
+import streamlit.components.v1 as components
+import base64
 
 # MASADER_BOT_URL = "http://0.0.0.0:8080"
 MASADER_BOT_URL = "https://masaderbot-production.up.railway.app"
+
 
 st.set_page_config(
     page_title="Masader Form",
@@ -61,12 +64,14 @@ column_lens = {}
 for c in schema:
     column_lens[c] = schema[c]["output_len"]
 required_columns = []
-print(column_lens)
+
 for c in schema:
     if (
         "N=0" not in schema[c]["output_len"] and "N>=0" not in schema[c]["output_len"]
     ):  # find required columns using N=0
         required_columns.append(c)
+
+use_annotations_paper = st.toggle("Enable annotations from paper")
 
 columns = list(schema.keys())
 
@@ -126,7 +131,11 @@ def validate_comma_separated_number(number: str) -> bool:
 
 
 def update_session_config(json_data):
-    for column in json_data:
+    for column in columns:
+        if use_annotations_paper:
+            st.session_state[f"annot_{column}"] = json_data["annotations_from_paper"][
+                column
+            ]
         type = column_types[column]
         if type == "List[str]":
             values = json_data[column]
@@ -168,10 +177,10 @@ def reload_config(json_data):
         json_data = json_data["metadata"]
     # make sure all the keys exist in the json data
 
-    for key in list(json_data.keys()):
-        if key not in columns:
-            print("deleting", key)
-            del json_data[key]
+    # for key in list(json_data.keys()):
+    #     if key not in columns:
+    #         print("deleting", key)
+    #         del json_data[key]
     try:
         st.session_state.paper_url = json_data["Paper Link"]
     except Exception as e:
@@ -365,6 +374,11 @@ def create_default_json():
             default_json[column] = 0.0
         else:
             default_json[column] = ""
+
+    if use_annotations_paper:
+        default_json["annotations_from_paper"] = {}
+        for column in columns:
+            default_json["annotations_from_paper"][column] = 1
     return default_json
 
 
@@ -381,18 +395,6 @@ def create_name(name):
         name = [n[0] for n in name]
         name = "".join(name)
     return name.lower()
-
-
-@st.fragment
-def download_json():
-    with st.spinner("Downloading ..."):
-        config = create_json()
-        st.download_button(
-            label="Save",
-            data=json.dumps(config, indent=4),
-            file_name="data.json",
-            mime="application/json",
-        )
 
 
 def validate_columns():
@@ -424,10 +426,9 @@ def validate_columns():
     return False
 
 
-def create_json(use_annotations_paper=False):
+def create_json():
     config = {}
-    if use_annotations_paper:
-        config["annotations_from_paper"] = {}
+
     for column in columns:
         type = column_types[column]
         if "List[Dict[" in type:
@@ -446,13 +447,16 @@ def create_json(use_annotations_paper=False):
                     break
         else:
             config[column] = st.session_state[column]
-            if use_annotations_paper:
-                if column in ["Citations", "Added By"]:
-                    config["annotations_from_paper"][column] = -1
-                else:
-                    config["annotations_from_paper"][column] = (
-                        1 if st.session_state[f"annot_{column}"] else 0
-                    )
+
+    if use_annotations_paper:
+        config["annotations_from_paper"] = {}
+        for column in columns:
+            if column in ["Citations", "Added By"]:
+                config["annotations_from_paper"][column] = -1
+            else:
+                config["annotations_from_paper"][column] = (
+                    1 if st.session_state[f"annot_{column}"] else 0
+                )
     return config
 
 
@@ -464,7 +468,6 @@ def create_element(
     value="",
     options=[],
     type="str",
-    use_annotations_paper=False,
 ):
     if label in required_columns:
         st.write(f"{label}*")
@@ -554,8 +557,53 @@ def fix_arxiv_link(link):
 def get_pdf(paper_url):
     if "arxiv.org" in paper_url:
         paper_url = fix_arxiv_link(paper_url)
+    return None
     response = requests.get(paper_url)
     return response.content
+
+def download_button(config):
+    object_to_download = json.dumps(config, indent=4)
+    b64 = base64.b64encode(object_to_download.encode()).decode()
+
+    dl_link = f"""
+    <html>
+    <head>
+    <title>Start Auto Download file</title>
+    <script src="http://code.jquery.com/jquery-3.2.1.min.js"></script>
+    <script>
+    $('<a href="data:text/json;base64,{b64}" download="{create_name(config['Name'])}.json">')[0].click()
+    </script>
+    </head>
+    </html>
+    """
+    return dl_link
+
+
+def download_json(config):
+    components.html(
+        download_button(config),
+        height=0,
+    )
+
+
+@st.fragment
+def submit_form():
+    col1, col2 = st.columns(2)
+    with col1:
+        submit = st.form_submit_button("Submit")
+    with col2:
+        download = st.form_submit_button("Download")
+
+    if submit or download:
+        if validate_columns():
+            config = create_json()
+
+        if download:
+            download_json(config)
+        elif submit:
+            update_pr(config)
+        else:
+            raise ("error")
 
 
 def main():
@@ -659,7 +707,9 @@ def main():
         with col2:
             with st.container(height=height):
                 if st.session_state["paper_url"]:
-                    pdf_viewer(get_pdf(paper_url), height=height, render_text=True)
+                    pdf = get_pdf(paper_url)
+                    if pdf:
+                        pdf_viewer(pdf, height=height, render_text=True)
                 else:
                     st.warning("No PDF found")
 
@@ -670,6 +720,8 @@ def main():
                         "GitHub username*", key="gh_username", value="zaidalyafeai"
                     )
                     for key in columns:
+                        if key == "annotations_from_paper":
+                            continue
                         if "options" in schema[key]:
                             options = schema[key]["options"]
                         else:
@@ -681,13 +733,7 @@ def main():
                             help=schema[key]["question"],
                             type=schema[key]["output_type"],
                         )
-                    submit = st.form_submit_button("Submit")
-
-                    if submit:
-                        if validate_columns():
-                            config = create_json()
-                            update_pr(config)
-                download_json()
+                    submit_form()
 
 
 if __name__ == "__main__":
