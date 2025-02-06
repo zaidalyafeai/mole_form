@@ -2,3 +2,4 @@ temp_repo/
 .streamlit/
 .env
 prs.json
+static/*.pdf
