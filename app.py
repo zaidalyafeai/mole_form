@@ -172,22 +172,17 @@ def update_session_config(json_data):
             st.session_state[column] = json_data[column]
 
 
-def reload_config(json_data):
-    if "metadata" in json_data:
-        json_data = json_data["metadata"]
-    # make sure all the keys exist in the json data
+def update_config(config, update_url=True):
+    if "metadata" in config:
+        config = config["metadata"]
 
-    # for key in list(json_data.keys()):
-    #     if key not in columns:
-    #         print("deleting", key)
-    #         del json_data[key]
-    try:
-        st.session_state.paper_url = json_data["Paper Link"]
-    except Exception as e:
-        print(e)
-        pass
-    update_session_config(json_data)
+    if update_url:
+        if "Paper Link" in config:
+            st.session_state.paper_url = config["Paper Link"]
+
     st.session_state.show_form = True
+
+    update_session_config(config)
 
 
 def render_list_dict(c, type):
@@ -331,8 +326,8 @@ def update_pr(new_dataset):
     st.balloons()
 
 
-def load_json(url, link="", pdf=None):
-    url = f"{url}/run"
+def get_metadata(link="", pdf=None):
+    url = f"{MASADER_BOT_URL}/run"
     if link != "":
         response = requests.post(url, data={"link": link})
     elif pdf:
@@ -344,7 +339,6 @@ def load_json(url, link="", pdf=None):
     if response.status_code == 200:
         # Parse the JSON content
         json_data = response.json()
-        reload_config(json_data)
         return json_data
     else:
         st.error(response.text)
@@ -384,8 +378,10 @@ def create_default_json():
 
 def reset_config():
     default_json = create_default_json()
-    reload_config(default_json)
+    update_config(default_json)
     st.session_state.show_form = False
+    st.session_state.paper_url = ""
+    st.session_state.paper_pdf = None
 
 
 def create_name(name):
@@ -451,12 +447,9 @@ def create_json():
     if use_annotations_paper:
         config["annotations_from_paper"] = {}
         for column in columns:
-            if column in ["Citations", "Added By"]:
-                config["annotations_from_paper"][column] = -1
-            else:
-                config["annotations_from_paper"][column] = (
-                    1 if st.session_state[f"annot_{column}"] else 0
-                )
+            config["annotations_from_paper"][column] = (
+                1 if st.session_state[f"annot_{column}"] else 0
+            )
     return config
 
 
@@ -477,7 +470,6 @@ def create_element(
         st.toggle(
             f"Paper annotated",
             key=f"annot_{key}",
-            value=True,
         )
     if key in schema:
         if "option_description" in schema[key]:
@@ -557,9 +549,9 @@ def fix_arxiv_link(link):
 def get_pdf(paper_url):
     if "arxiv.org" in paper_url:
         paper_url = fix_arxiv_link(paper_url)
-    return None
     response = requests.get(paper_url)
     return response.content
+
 
 def download_button(config):
     object_to_download = json.dumps(config, indent=4)
@@ -579,11 +571,34 @@ def download_button(config):
     return dl_link
 
 
+def load_json(file=None, link=""):
+    if file:
+        return json.load(file)
+    elif link:
+        response = requests.get(link)
+        response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
+        return response.json()
+    else:
+        raise ("Error: can not load json")
+
+
 def download_json(config):
     components.html(
         download_button(config),
         height=0,
     )
+
+
+def displayPDF(link="", pdf=None, height=1200):
+    # Opening file from file path
+    if pdf:
+        base64_pdf = base64.b64encode(pdf).decode("utf-8")
+        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="{height}px"></iframe>'
+    elif link != "":
+        pdf_display = f'<iframe src="{link}" width="100%" height="{height}px" type="application/pdf"></iframe>'
+
+    # Displaying File
+    st.markdown(pdf_display, unsafe_allow_html=True)
 
 
 @st.fragment
@@ -628,9 +643,12 @@ def main():
     if "show_form" not in st.session_state:
         reset_config()
 
-    if st.query_params:
-        if st.query_params["json_url"]:
-            load_json(st.query_params["json_url"])
+    if "paper_pdf" not in st.session_state:
+        st.session_state.paper_pdf = None
+
+    # if st.query_params:
+    #     if st.query_params["json_url"]:
+    #         load_json(st.query_params["json_url"])
 
     options = st.selectbox(
         "Annotation Options",
@@ -649,56 +667,58 @@ def main():
         )
 
         if upload_file:
-            json_data = json.load(upload_file)
-            reload_config(json_data)
+            metadata = load_json(file=upload_file)
+            update_config(metadata)
         elif json_url:
-            load_json(json_url)
+            metadata = load_json(url=json_url)
+            update_config(metadata)
         else:
             reset_config()
 
-        paper_url = st.text_input("Insert paper direct link", key="paper_url")
-    else:
-        if options == "🤖 AI Annotation":
-            st.warning(
-                "‼️ AI annotation uses LLMs to extract the metadata form papers. However, this approach\
-                    is not reliable as LLMs can hellucinate and extract untrustworthy informations. \
-                    Make sure you revise the generated metadata before you submit."
-            )
-        else:
-            st.session_state.show_form = True
-
-        paper_url = st.text_input("Insert paper direct link", key="paper_url")
-
-        if options == "🤖 AI Annotation":
-            upload_pdf = st.file_uploader(
-                "Upload PDF of the paper",
-                help="You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets",
-            )
-
-            if paper_url:
-                if "arxiv" in paper_url:
-                    load_json(MASADER_BOT_URL, link=paper_url)
-                else:
-                    response = requests.get(paper_url)
-                    response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
-                    if response.headers.get("Content-Type") == "application/pdf":
-                        pdf = (
-                            paper_url.split("/")[-1],
-                            response.content,
-                            response.headers.get("Content-Type", "application/pdf"),
-                        )
-                        load_json(MASADER_BOT_URL, pdf=pdf)
-                    else:
-                        st.error(
-                            f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
-                        )
-
-            elif upload_pdf:
-                # Prepare the file for sending
-                pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
-                load_json(MASADER_BOT_URL, pdf=pdf)
+    if options == "🤖 AI Annotation":
+        st.warning(
+            "‼️ AI annotation uses LLMs to extract the metadata form papers. However, this approach\
+                is not reliable as LLMs can hellucinate and extract untrustworthy informations. \
+                Make sure you revise the generated metadata before you submit."
+        )
+        upload_pdf = st.file_uploader(
+            "Upload PDF of the paper",
+            help="You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets",
+        )
+        paper_url = st.session_state.paper_url
+        if upload_pdf:
+            # Prepare the file for sending
+            pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
+            st.session_state.paper_pdf = upload_pdf
+            metadata = get_metadata(pdf=pdf)
+            update_config(metadata, update_url=False)
+        elif paper_url:
+            if "arxiv" in paper_url:
+                metadata = get_metadata(link=paper_url)
+                update_config(metadata, update_url=False)
             else:
-                reset_config()
+                response = requests.get(paper_url)
+                response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
+                if response.headers.get("Content-Type") == "application/pdf":
+                    pdf = (
+                        paper_url.split("/")[-1],
+                        response.content,
+                        response.headers.get("Content-Type", "application/pdf"),
+                    )
+                    metadata = get_metadata(pdf=pdf)
+                    update_config(metadata)
+                else:
+                    st.error(
+                        f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
+                    )
+        else:
+            reset_config()
+
+    if options == "🦚 Manual Annotation":
+        st.session_state.show_form = True
+
+    if options != "🚥 Load Annotation":
+        st.text_input("Paper Direct Link", key="paper_url")
 
     col1, col2 = st.columns(2)
     height = 1200
@@ -706,10 +726,14 @@ def main():
     if st.session_state.show_form:
         with col2:
             with st.container(height=height):
-                if st.session_state["paper_url"]:
-                    pdf = get_pdf(paper_url)
-                    if pdf:
-                        pdf_viewer(pdf, height=height, render_text=True)
+                if st.session_state.paper_pdf:
+                    file_path = f"static/temp.pdf"
+                    with open(file_path, "wb") as f:
+                        f.write(st.session_state.paper_pdf.getbuffer())
+                    displayPDF(link = f"app/{file_path}")
+                elif st.session_state.paper_url:
+                    # pdf_viewer(pdf, height=height, render_text=True)
+                    displayPDF(link=st.session_state.paper_url, height=height)
                 else:
                     st.warning("No PDF found")
 
