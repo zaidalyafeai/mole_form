@@ -35,7 +35,7 @@ GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL")
 import requests
 
 # Example Usage
-mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr"])
+mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi"])
 
 try:
     schema = requests.post(f"{MASADER_BOT_URL}/schema", data={"name": mode}).json()
@@ -167,7 +167,11 @@ def update_session_config(json_data):
                                 "options"
                             ][-1]
                         else:
-                            st.session_state[f"{column}_0_{subkey}"] = ""
+                            type = column_types[subkey]
+                            if type == 'float':
+                                st.session_state[f"{column}_0_{subkey}"] = 0.0
+                            else:
+                                st.session_state[f"{column}_0_{subkey}"] = ""
         else:
             st.session_state[column] = json_data[column]
 
@@ -205,7 +209,15 @@ def render_list_dict(c, type):
                             subkey, options=options, key=f"{c}_{i}_{subkey}"
                         )
                     else:
-                        elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
+                        type = column_types[subkey]
+                        if type == "float":
+                            elem = st.number_input(
+                                subkey,
+                                key=f"{c}_{i}_{subkey}",
+                                step=0.1,
+                            )
+                        else:
+                            elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
                 else:
                     elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
             if j == 0:
@@ -730,7 +742,7 @@ def main():
                     file_path = f"static/temp.pdf"
                     with open(file_path, "wb") as f:
                         f.write(st.session_state.paper_pdf.getbuffer())
-                    displayPDF(link = f"app/{file_path}")
+                    displayPDF(link=f"app/{file_path}")
                 elif st.session_state.paper_url:
                     # pdf_viewer(pdf, height=height, render_text=True)
                     displayPDF(link=st.session_state.paper_url, height=height)
