@@ -14,17 +14,17 @@ from streamlit_pdf_viewer import pdf_viewer
 import streamlit.components.v1 as components
 import base64
 
-# MASADER_BOT_URL = "http://0.0.0.0:8080"
-MASADER_BOT_URL = "https://masaderbot-production.up.railway.app"
+MASADER_BOT_URL = "http://0.0.0.0:8000"
+# MASADER_BOT_URL = "https://masaderbot-production.up.railway.app"
 
 
 st.set_page_config(
-    page_title="Masader Form",
+    page_title="MOLE Form",
     page_icon="📮",
     initial_sidebar_state="collapsed",
     layout="wide",
 )
-"# 📮 :rainbow[Masader Form]"
+"# 📮 :rainbow[MOLE Form]"
 
 load_dotenv()  # Load environment variables from a .env file
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -58,17 +58,18 @@ NUM_VALIDATION_COLUMNS = len(validation_columns)
 
 column_types = {}
 for c in schema:
-    column_types[c] = schema[c]["output_type"]
+    column_types[c] = schema[c]["answer_type"]
 
 column_lens = {}
 for c in schema:
-    column_lens[c] = schema[c]["output_len"]
+    if "answer_max" in schema[c]:
+        column_lens[c] = [schema[c]["answer_min"], schema[c]["answer_max"]]
+    else:
+        column_lens[c] = [schema[c]["answer_min"], -1]
 required_columns = []
 
 for c in schema:
-    if (
-        "N=0" not in schema[c]["output_len"] and "N>=0" not in schema[c]["output_len"]
-    ):  # find required columns using N=0
+    if schema[c]["answer_min"] > 0:
         required_columns.append(c)
 
 use_annotations_paper = st.toggle("Enable annotations from paper")
@@ -158,7 +159,11 @@ def update_session_config(json_data):
             if len(subsets) > 0:
                 for i, subset in enumerate(subsets):
                     for subkey in subset:
-                        st.session_state[f"{column}_{i}_{subkey}"] = subset[subkey]
+                        if subkey in column_types:
+                            if column_types[subkey] == "float":
+                                st.session_state[f"{column}_{i}_{subkey}"] = float(subset[subkey])
+                            else:
+                                st.session_state[f"{column}_{i}_{subkey}"] = subset[subkey]
             else:
                 for subkey in keys:
                     if subkey in schema:
@@ -340,10 +345,11 @@ def update_pr(new_dataset):
 
 def get_metadata(link="", pdf=None):
     url = f"{MASADER_BOT_URL}/run"
+    # print(pdf)
     if link != "":
-        response = requests.post(url, data={"link": link})
+        response = requests.post(url, data={"link": link, "schema": mode})
     elif pdf:
-        response = requests.post(url, files={"file": pdf})
+        response = requests.post(url, files={"file": pdf}, data={"schema": mode})
     else:
         response = requests.get(url)
 
@@ -362,7 +368,7 @@ def create_default_json():
     for column in columns:
         type = column_types[column]
         if "options" in schema[column]:
-            if type in ["str"]:
+            if type in ["str", "url", "bool"]:
                 default_json[column] = schema[column]["options"][-1]
             elif type == "List[str]":
                 default_json[column] = [schema[column]["options"][-1]]
@@ -506,7 +512,7 @@ def create_element(
             key, options=options, key=key, label_visibility="collapsed", help=help
         )
     elif type == "List[str]":
-        if len(options) > 0 and ("len(options)" in column_lens[key]):
+        if len(options) > 0:
             st.multiselect(
                 key, options=options, key=key, label_visibility="collapsed", help=help
             )
@@ -528,7 +534,9 @@ def create_element(
             )
             render_list_dict(key, type)
     else:
-        if key in column_lens and "N>50" in column_lens[key]:
+        if type == "bool":
+            st.checkbox(key, key=key, label_visibility="collapsed", help=help)
+        elif key in column_lens and column_lens[key][0] > 3:
             st.text_area(
                 key,
                 key=key,
@@ -636,7 +644,7 @@ def submit_form():
 def main():
     st.info(
         """
-    This is a the Masader form to add datasets to [Masader](https://arbml.github.io/masader/) catalogue.
+    This is a the MOLE form to that allows users to annotate datasets.
     Before starting, please make sure you read the following instructions:
     - There are three options
         - 🦚 Manual Annotation: You can have to insert all the metadata manually.
@@ -647,7 +655,7 @@ def main():
     - You have the direct link to the dataset repository
 
     Once you submit the dataset, we will send a PR, make sure you follow up there if you have any questions. 
-    If you have face any issues post them on [GitHub](https://github.com/arbml/masader/issues).
+    If you have face any issues post them on [GitHub](https://github.com/zaildalyafeai/mole/issues).
     """,
         icon="👾",
     )
@@ -767,7 +775,7 @@ def main():
                             options=options,
                             key=key,
                             help=schema[key]["question"],
-                            type=schema[key]["output_type"],
+                            type=schema[key]["answer_type"],
                         )
                     submit_form()
 
