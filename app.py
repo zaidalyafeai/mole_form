@@ -71,7 +71,8 @@ for c in schema:
     if schema[c]["answer_min"] > 0:
         required_columns.append(c)
 
-use_annotations_paper = st.toggle("Enable annotations from paper")
+use_annotations_paper = False
+# use_annotations_paper = st.toggle("Enable annotations from paper")
 
 columns = list(schema.keys())
 
@@ -643,21 +644,20 @@ def submit_form():
 def main():
     st.info(
         """
-    This is a the MOLE form to that allows users to annotate datasets.
-    Before starting, please make sure you read the following instructions:
+    This is the MOLE form to that allows users to annotate metadata of datasets manually or using AI.
     - There are three options
         - 🦚 Manual Annotation: You can have to insert all the metadata manually.
         - 🤖 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
         - 🚥 Load Annotation: Use this option to load a saved metadata annotation. 
-    - Check the dataset does not exist in the catelouge using the search [Masader](https://arbml.github.io/masader/search)
-    - You have a valid GitHub username
-    - You have the direct link to the dataset repository
-
-    Once you submit the dataset, we will send a PR, make sure you follow up there if you have any questions. 
-    If you have face any issues post them on [GitHub](https://github.com/zaildalyafeai/mole/issues).
+    If you have face any issues post them on [GitHub](https://github.com/IVUL-KAUST/MOLE/issues).
     """,
         icon="👾",
     )
+
+    # - Check the dataset does not exist in the catelouge using the search [Masader](https://arbml.github.io/masader/search)
+    # - You have a valid GitHub username
+    # - You have the direct link to the dataset repository
+    # Once you submit the dataset, we will send a PR, make sure you follow up there if you have any questions. 
 
     if "show_form" not in st.session_state:
         reset_config()
