@@ -14,8 +14,7 @@ from streamlit_pdf_viewer import pdf_viewer
 import streamlit.components.v1 as components
 import base64
 
-MASADER_BOT_URL = "http://0.0.0.0:8000"
-# MASADER_BOT_URL = "https://masaderbot-production.up.railway.app"
+MOLE_URL = "https://https://mole-production-1428.up.railway.app"
 
 
 st.set_page_config(
@@ -38,7 +37,7 @@ import requests
 mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi"])
 
 try:
-    schema = requests.post(f"{MASADER_BOT_URL}/schema", data={"name": mode}).json()
+    schema = requests.post(f"{MOLE_URL}/schema", data={"name": mode}).json()
 except Exception as e:
     print("Error:", str(e))
 
@@ -344,7 +343,7 @@ def update_pr(new_dataset):
 
 
 def get_metadata(link="", pdf=None):
-    url = f"{MASADER_BOT_URL}/run"
+    url = f"{MOLE_URL}/run"
     # print(pdf)
     if link != "":
         response = requests.post(url, data={"link": link, "schema": mode})
@@ -625,7 +624,7 @@ def displayPDF(link="", pdf=None, height=1200):
 def submit_form():
     col1, col2 = st.columns(2)
     with col1:
-        submit = st.form_submit_button("Submit")
+        submit = st.form_submit_button("Submit", disabled=True)
     with col2:
         download = st.form_submit_button("Download")
 
@@ -683,7 +682,7 @@ def main():
         )
         json_url = st.text_input(
             "Path to json",
-            placeholder="For example: https://raw.githubusercontent.com/ARBML/masader_form/refs/heads/main/shami.json",
+            placeholder="For example: https://raw.githubusercontent.com/zaidalyafeai/mole_form/refs/heads/main/shami.json",
         )
 
         if upload_file:
