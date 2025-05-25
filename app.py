@@ -14,7 +14,7 @@ from streamlit_pdf_viewer import pdf_viewer
 import streamlit.components.v1 as components
 import base64
 
-MOLE_URL = "https://https://mole-production-1428.up.railway.app"
+MOLE_URL = "https://mole-production-1428.up.railway.app"
 
 
 st.set_page_config(
