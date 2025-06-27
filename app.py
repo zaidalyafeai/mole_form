@@ -14,7 +14,7 @@ from streamlit_pdf_viewer import pdf_viewer
 import streamlit.components.v1 as components
 import base64
 
-MOLE_URL = "https://mole-production-1428.up.railway.app"
+MOLE_URL = "http://localhost:8000"
 
 
 st.set_page_config(
@@ -72,7 +72,7 @@ for c in schema:
         required_columns.append(c)
 
 use_annotations_paper = False
-# use_annotations_paper = st.toggle("Enable annotations from paper")
+use_annotations_paper = st.toggle("Enable annotations from paper", value = True)
 
 columns = list(schema.keys())
 
@@ -190,7 +190,10 @@ def update_config(config, update_url=True):
             st.session_state.paper_url = config["Paper Link"]
 
     st.session_state.show_form = True
-
+    if 'annotations_from_paper' not in config:
+        config['annotations_from_paper'] = {}
+        for column in columns:
+            config['annotations_from_paper'][column] = 1
     update_session_config(config)
 
 
@@ -447,15 +450,17 @@ def create_json():
         type = column_types[column]
         if "List[Dict[" in type:
             config[column] = []
+            subset_keys = [key.strip() for key in type.replace("List[Dict[", "").replace("]]", "").split(",")]
             i = 0
             while True:
                 subset = {}
-                matched_subsets = [s for s in st.session_state if f"subset_{i}_" in s]
+                matched_subsets = [s for s in st.session_state if f"{column}_{i}_" in s]
                 if len(matched_subsets):
-                    for subset_key_name in matched_subsets:
-                        subset_name = subset_key_name.split("_")[-1]
-                        subset[subset_name] = st.session_state[subset_key_name]
-                    config[column].append(subset)
+                    for subset_key_name in subset_keys:
+                        if st.session_state[f"{column}_{i}_{subset_key_name}"] != "":
+                            subset[subset_key_name] = st.session_state[f"{column}_{i}_{subset_key_name}"]
+                    if len(subset) == len(subset_keys):
+                        config[column].append(subset)
                     i += 1
                 else:
                     break
@@ -488,6 +493,7 @@ def create_element(
         st.toggle(
             f"Paper annotated",
             key=f"annot_{key}",
+            value=True,
         )
     if key in schema:
         if "option_description" in schema[key]:
@@ -671,7 +677,7 @@ def main():
 
     options = st.selectbox(
         "Annotation Options",
-        ["🦚 Manual Annotation", "🤖 AI Annotation", "🚥 Load Annotation"],
+        ["🤖 AI Annotation", "🦚 Manual Annotation", "🚥 Load Annotation"],
         on_change=reset_config,
     )
 
