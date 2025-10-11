@@ -58,7 +58,7 @@ for c in schema:
         required_columns.append(c)
 
 use_annotations_paper = False
-use_annotations_paper = st.toggle("Enable annotations from paper", value = True)
+# use_annotations_paper = st.toggle("Enable annotations from paper", value = True)
 
 columns = list(schema.keys())
 
@@ -529,9 +529,8 @@ def create_element(
             render_list_dict(key, type)
     else:
         if type == "bool":
-            st.write(key)
             st.checkbox(key, key=key, label_visibility="collapsed", help=help)
-        elif key in column_lens and column_lens[key][0] > 3:
+        elif key in column_lens and column_lens[key][1] > 100:
             st.text_area(
                 key,
                 key=key,
@@ -627,7 +626,7 @@ def submit_form():
     if submit or download:
         if validate_columns():
             config = create_json()
-
+            config = {key.replace('_', ' '): value for key, value in config.items()}
         if download:
             download_json(config)
         elif submit:
@@ -766,7 +765,7 @@ def main():
                         else:
                             options = []
                         create_element(
-                            key,
+                            key.replace('_', ' '),
                             options=options,
                             key=key,
                             help='',
