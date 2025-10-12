@@ -688,7 +688,7 @@ def main():
         else:
             reset_config()
 
-    if options == "🤖 AI Annotation":
+    if options == "👾 AI Annotation":
         st.warning(
             "‼️ AI annotation uses LLMs to extract the metadata form papers. However, this approach\
                 is not reliable as LLMs can hellucinate and extract untrustworthy informations. \
