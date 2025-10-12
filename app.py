@@ -18,12 +18,12 @@ MOLE_URL = "https://mextract-production.up.railway.app"
 
 
 st.set_page_config(
-    page_title="MOLE Form",
+    page_title="Masader Form",
     page_icon="📮",
     initial_sidebar_state="collapsed",
     layout="wide",
 )
-"# 📮 :rainbow[MOLE Form]"
+"# 📮 :rainbow[Masader Form]"
 
 load_dotenv()  # Load environment variables from a .env file
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
@@ -641,11 +641,10 @@ def main():
     This is the MOLE form to that allows users to annotate metadata of datasets manually or using AI.
     - There are three options
         - 🦚 Manual Annotation: You can have to insert all the metadata manually.
-        - 🤖 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
+        - 👾 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
         - 🚥 Load Annotation: Use this option to load a saved metadata annotation. 
     If you have face any issues post them on [GitHub](https://github.com/IVUL-KAUST/MOLE/issues).
     """,
-        icon="👾",
     )
 
     # - Check the dataset does not exist in the catelouge using the search [Masader](https://arbml.github.io/masader/search)
