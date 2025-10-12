@@ -15,6 +15,7 @@ import streamlit.components.v1 as components
 import base64
 
 MOLE_URL = "https://mextract-production.up.railway.app"
+# MOLE_URL = "http://0.0.0.0:8000"
 
 
 st.set_page_config(
@@ -37,7 +38,6 @@ mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi"])
 
 try:
     schema = requests.post(f"{MOLE_URL}/schema", data={"name": mode}).json()
-    schema = json.loads(schema)
 except Exception as e:
     print("Error:", str(e))
 
@@ -664,7 +664,7 @@ def main():
 
     options = st.selectbox(
         "Annotation Options",
-        ["🤖 AI Annotation", "🦚 Manual Annotation", "🚥 Load Annotation"],
+        ["👾 AI Annotation", "🦚 Manual Annotation", "🚥 Load Annotation"],
         index=1,
         on_change=reset_config,
     )
