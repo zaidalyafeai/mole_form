@@ -14,22 +14,21 @@ from streamlit_pdf_viewer import pdf_viewer
 import streamlit.components.v1 as components
 import base64
 
-MOLE_URL = "http://localhost:8000"
+MOLE_URL = "https://mextract-production.up.railway.app"
 
 
 st.set_page_config(
-    page_title="MOLE Form",
+    page_title="Masader Form",
     page_icon="📮",
     initial_sidebar_state="collapsed",
     layout="wide",
 )
-"# 📮 :rainbow[MOLE Form]"
+"# 📮 :rainbow[Masader Form]"
 
 load_dotenv()  # Load environment variables from a .env file
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 GIT_USER_NAME = os.getenv("GIT_USER_NAME")
 GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL")
-
 
 import requests
 
@@ -38,22 +37,9 @@ mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi"])
 
 try:
     schema = requests.post(f"{MOLE_URL}/schema", data={"name": mode}).json()
+    schema = json.loads(schema)
 except Exception as e:
     print("Error:", str(e))
-
-evaluation_subsets = {}
-for c in schema:
-    if "validation_group" in schema[c]:
-        group = schema[c]["validation_group"]
-        if group not in evaluation_subsets:
-            evaluation_subsets[group] = []
-        evaluation_subsets[group].append(c)
-
-validation_columns = []
-for c in evaluation_subsets:
-    validation_columns += evaluation_subsets[c]
-
-NUM_VALIDATION_COLUMNS = len(validation_columns)
 
 column_types = {}
 for c in schema:
@@ -72,7 +58,7 @@ for c in schema:
         required_columns.append(c)
 
 use_annotations_paper = False
-use_annotations_paper = st.toggle("Enable annotations from paper", value = True)
+# use_annotations_paper = st.toggle("Enable annotations from paper", value = True)
 
 columns = list(schema.keys())
 
@@ -138,13 +124,13 @@ def update_session_config(json_data):
                 column
             ]
         type = column_types[column]
-        if type == "List[str]":
+        if type == "list[str]":
             values = json_data[column]
             st.session_state[column] = values
 
-        elif "List[Dict[" in type:
+        elif "list[dict[" in type:
             subsets = json_data[column]
-            keys = type.replace("List[Dict[", "").replace("]]", "").split(",")
+            keys = type.replace("list[dict[", "").replace("]]", "").split(",")
             keys = [key.strip() for key in keys]
             i = 0
             nostop = True
@@ -177,6 +163,8 @@ def update_session_config(json_data):
                                 st.session_state[f"{column}_0_{subkey}"] = 0.0
                             else:
                                 st.session_state[f"{column}_0_{subkey}"] = ""
+        elif type == "bool":
+            st.session_state[column] = bool(json_data[column])
         else:
             st.session_state[column] = json_data[column]
 
@@ -198,8 +186,8 @@ def update_config(config, update_url=True):
 
 
 def render_list_dict(c, type):
-    # List[Dict[Name, Volume, Unit, Dialect]]
-    type = type.replace("List[Dict[", "")
+    # list[dict[Name, Volume, Unit, Dialect]]
+    type = type.replace("list[dict[", "")
     type = type.replace("]]", "")
     keys = [key.strip() for key in type.split(",")]
     i = 0
@@ -350,9 +338,9 @@ def get_metadata(link="", pdf=None):
     url = f"{MOLE_URL}/run"
     # print(pdf)
     if link != "":
-        response = requests.post(url, data={"link": link, "schema": mode})
+        response = requests.post(url, data={"link": link, "schema_name": mode})
     elif pdf:
-        response = requests.post(url, files={"file": pdf}, data={"schema": mode})
+        response = requests.post(url, files={"file": pdf}, data={"schema_name": mode})
     else:
         response = requests.get(url)
 
@@ -373,15 +361,15 @@ def create_default_json():
         if "options" in schema[column]:
             if type in ["str", "url", "bool"]:
                 default_json[column] = schema[column]["options"][-1]
-            elif type == "List[str]":
+            elif type == "list[str]":
                 default_json[column] = [schema[column]["options"][-1]]
             else:
                 raise ()
-        elif type == "List[str]":  # no options
+        elif type == "list[str]":  # no options
             default_json[column] = []
-        elif "List[Dict" in type:
+        elif "list[dict" in type:
             default_json[column] = []
-        elif type == "date[year]":
+        elif type == "year":
             default_json[column] = date.today().year
         elif type == "int":
             default_json[column] = 0
@@ -420,7 +408,7 @@ def validate_columns():
     for key in required_columns:
         value = st.session_state[key]
         type = column_types[key]
-        if type in ["List[str]", "List[Dict]"]:
+        if type in ["list[str]", "list[dict]"]:
             if len(value) == 0:
                 st.error(f"Please enter a valid {key}.")
                 break
@@ -448,9 +436,9 @@ def create_json():
 
     for column in columns:
         type = column_types[column]
-        if "List[Dict[" in type:
+        if "list[dict[" in type:
             config[column] = []
-            subset_keys = [key.strip() for key in type.replace("List[Dict[", "").replace("]]", "").split(",")]
+            subset_keys = [key.strip() for key in type.replace("list[dict[", "").replace("]]", "").split(",")]
             i = 0
             while True:
                 subset = {}
@@ -509,7 +497,7 @@ def create_element(
             label_visibility="collapsed",
             step=0.1,
         )
-    elif type in ["int", "date[year]"]:
+    elif type in ["int", "year"]:
         st.number_input(key, key=key, label_visibility="collapsed", step=1, help=help)
     elif (len(options) > 0 and len(options) <= 5) and type == "str":
         st.radio(key, options=options, key=key, label_visibility="collapsed", help=help)
@@ -517,7 +505,7 @@ def create_element(
         st.selectbox(
             key, options=options, key=key, label_visibility="collapsed", help=help
         )
-    elif type == "List[str]":
+    elif type == "list[str]":
         if len(options) > 0:
             st.multiselect(
                 key, options=options, key=key, label_visibility="collapsed", help=help
@@ -532,7 +520,7 @@ def create_element(
                 suggestions=options,
             )
 
-    elif "List[Dict[" in type:
+    elif "list[dict[" in type:
         with st.expander(f"Add {key}"):
             st.caption(
                 "Use this field to add dialect subsets of the dataset. For example if the dataset has 1,000 sentences in the Yemeni dialect.\
@@ -542,7 +530,7 @@ def create_element(
     else:
         if type == "bool":
             st.checkbox(key, key=key, label_visibility="collapsed", help=help)
-        elif key in column_lens and column_lens[key][0] > 3:
+        elif key in column_lens and column_lens[key][1] > 100:
             st.text_area(
                 key,
                 key=key,
@@ -631,14 +619,14 @@ def displayPDF(link="", pdf=None, height=1200):
 def submit_form():
     col1, col2 = st.columns(2)
     with col1:
-        submit = st.form_submit_button("Submit", disabled=True)
+        submit = st.form_submit_button("Submit")
     with col2:
         download = st.form_submit_button("Download")
 
     if submit or download:
         if validate_columns():
             config = create_json()
-
+            config = {key.replace('_', ' '): value for key, value in config.items()}
         if download:
             download_json(config)
         elif submit:
@@ -653,11 +641,10 @@ def main():
     This is the MOLE form to that allows users to annotate metadata of datasets manually or using AI.
     - There are three options
         - 🦚 Manual Annotation: You can have to insert all the metadata manually.
-        - 🤖 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
+        - 👾 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
         - 🚥 Load Annotation: Use this option to load a saved metadata annotation. 
     If you have face any issues post them on [GitHub](https://github.com/IVUL-KAUST/MOLE/issues).
     """,
-        icon="👾",
     )
 
     # - Check the dataset does not exist in the catelouge using the search [Masader](https://arbml.github.io/masader/search)
@@ -678,6 +665,7 @@ def main():
     options = st.selectbox(
         "Annotation Options",
         ["🤖 AI Annotation", "🦚 Manual Annotation", "🚥 Load Annotation"],
+        index=1,
         on_change=reset_config,
     )
 
@@ -776,10 +764,10 @@ def main():
                         else:
                             options = []
                         create_element(
-                            key,
+                            key.replace('_', ' '),
                             options=options,
                             key=key,
-                            help=schema[key]["question"],
+                            help='',
                             type=schema[key]["answer_type"],
                         )
                     submit_form()
