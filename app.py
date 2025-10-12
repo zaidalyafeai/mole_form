@@ -14,7 +14,7 @@ from streamlit_pdf_viewer import pdf_viewer
 import streamlit.components.v1 as components
 import base64
 
-MOLE_URL = "http://localhost:8000"
+MOLE_URL = "https://mextract-production.up.railway.app"
 
 
 st.set_page_config(
