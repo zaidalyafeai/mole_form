@@ -608,11 +608,14 @@ def displayPDF(link="", pdf=None, height=1200):
     if pdf:
         base64_pdf = base64.b64encode(pdf).decode("utf-8")
         pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="{height}px"></iframe>'
+        # Displaying File
+        st.markdown(pdf_display, unsafe_allow_html=True)
     elif link != "":
         pdf_display = f'<iframe src="{link}" width="100%" height="{height}px" type="application/pdf"></iframe>'
-
-    # Displaying File
-    st.markdown(pdf_display, unsafe_allow_html=True)
+        # Displaying File
+        st.markdown(pdf_display, unsafe_allow_html=True)
+    else:
+        st.error("No PDF content provided")
 
 
 @st.fragment
@@ -740,10 +743,9 @@ def main():
         with col2:
             with st.container(height=height):
                 if st.session_state.paper_pdf:
-                    file_path = f"static/temp.pdf"
-                    with open(file_path, "wb") as f:
-                        f.write(st.session_state.paper_pdf.getbuffer())
-                    displayPDF(link=f"app/{file_path}")
+                    # Use base64 encoding for PDF display instead of file path
+                    pdf_bytes = st.session_state.paper_pdf.getbuffer()
+                    displayPDF(pdf=pdf_bytes)
                 elif st.session_state.paper_url:
                     # pdf_viewer(pdf, height=height, render_text=True)
                     displayPDF(link=st.session_state.paper_url, height=height)
