@@ -607,14 +607,69 @@ def download_json(config):
 def displayPDF(link="", pdf=None, height=1200):
     # Opening file from file path
     if pdf:
-        base64_pdf = base64.b64encode(pdf).decode("utf-8")
-        pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="{height}px"></iframe>'
-        # Displaying File
-        st.markdown(pdf_display, unsafe_allow_html=True)
+        try:
+            # Check PDF size for diagnostics
+            pdf_size = len(pdf) / (1024 * 1024)  # Size in MB
+            if pdf_size > 10:
+                print(f"Large PDF detected ({pdf_size:.1f} MB). This may cause display issues.")
+            
+            # Use streamlit_pdf_viewer for better compatibility
+            pdf_viewer(pdf, height=height, render_text=True)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "memory" in error_msg or "size" in error_msg:
+                print(f"PDF too large to display ({pdf_size:.1f} MB). Try a smaller file.")
+            elif "corrupt" in error_msg or "invalid" in error_msg:
+                print("PDF file appears to be corrupted or invalid.")
+            else:
+                print(f"PDF viewer failed: {str(e)}")
+            
+            print("Trying alternative display method...")
+            # Fallback to base64 iframe method
+            try:
+                if len(pdf) < 5 * 1024 * 1024:  # Only try iframe for files < 5MB
+                    base64_pdf = base64.b64encode(pdf).decode("utf-8")
+                    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="{height}px"></iframe>'
+                    st.markdown(pdf_display, unsafe_allow_html=True)
+                    print("Using fallback display method")
+                else:
+                    print("PDF too large for fallback display method")
+            except Exception as e2:
+                print(f"All display methods failed: {str(e2)}")
     elif link != "":
-        pdf_display = f'<iframe src="{link}" width="100%" height="{height}px" type="application/pdf"></iframe>'
-        # Displaying File
-        st.markdown(pdf_display, unsafe_allow_html=True)
+        try:
+            # For external links, try to fetch and display with pdf_viewer
+            if "arxiv" in link:
+                print("Fetching PDF from ArXiv...")
+                # For arxiv links, fetch the PDF content with timeout
+                response = requests.get(link, timeout=30)
+                if response.status_code == 200:
+                    pdf_size = len(response.content) / (1024 * 1024)
+                    if pdf_size > 10:
+                        print(f"Large PDF from ArXiv ({pdf_size:.1f} MB). This may take time to load.")
+                    pdf_viewer(response.content, height=height, render_text=True)
+                else:
+                    print(f"Failed to fetch PDF from {link} (Status: {response.status_code})")
+            else:
+                # For other links, use iframe as fallback
+                st.info("Loading PDF from external link...")
+                pdf_display = f'<iframe src="{link}" width="100%" height="{height}px" type="application/pdf"></iframe>'
+                st.markdown(pdf_display, unsafe_allow_html=True)
+        except requests.exceptions.Timeout:
+            print("Timeout while fetching PDF. The server may be slow or the file too large.")
+        except requests.exceptions.RequestException as e:
+            print(f"Network error while fetching PDF: {str(e)}")
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "memory" in error_msg:
+                print("PDF too large to display in viewer.")
+            else:
+                print(f"Error displaying PDF from link: {str(e)}")
+            
+            print("Trying iframe fallback...")
+            # Fallback to iframe method
+            pdf_display = f'<iframe src="{link}" width="100%" height="{height}px" type="application/pdf"></iframe>'
+            st.markdown(pdf_display, unsafe_allow_html=True)
     else:
         st.error("No PDF content provided")
 
@@ -744,11 +799,10 @@ def main():
         with col2:
             with st.container(height=height):
                 if st.session_state.paper_pdf:
-                    # Use base64 encoding for PDF display instead of file path
-                    pdf_bytes = st.session_state.paper_pdf.getbuffer()
+                    # Convert to bytes for PDF display
+                    pdf_bytes = st.session_state.paper_pdf.getvalue()
                     displayPDF(pdf=pdf_bytes)
                 elif st.session_state.paper_url:
-                    # pdf_viewer(pdf, height=height, render_text=True)
                     displayPDF(link=st.session_state.paper_url, height=height)
                 else:
                     st.warning("No PDF found")
