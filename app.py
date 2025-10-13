@@ -478,6 +478,7 @@ def create_element(
         st.write(f"{label}*")
     else:
         st.write(label)
+    st.caption(help)
     if use_annotations_paper:
         st.toggle(
             f"Paper annotated",
@@ -497,6 +498,7 @@ def create_element(
             key=key,
             label_visibility="collapsed",
             step=0.1,
+            help=help,
         )
     elif type in ["int", "year"]:
         st.number_input(key, key=key, label_visibility="collapsed", step=1, help=help)
@@ -741,7 +743,7 @@ def main():
         )
         json_url = st.text_input(
             "Path to json",
-            placeholder="For example: https://raw.githubusercontent.com/zaidalyafeai/mole_form/refs/heads/main/shami.json",
+            placeholder="https://raw.githubusercontent.com/ARBML/masader/refs/heads/main/datasets/sada.json",
         )
 
         if upload_file:
@@ -830,7 +832,7 @@ def main():
                             key.replace('_', ' '),
                             options=options,
                             key=key,
-                            help='',
+                            help=schema[key]["description"],
                             type=schema[key]["answer_type"],
                         )
                     submit_form()
