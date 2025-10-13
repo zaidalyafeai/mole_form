@@ -588,14 +588,16 @@ def download_button(config):
 
 def load_json(file=None, link=""):
     if file:
-        return json.load(file)
+        out_json = json.load(file)
     elif link:
         response = requests.get(link)
         response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
-        return response.json()
+        out_json = response.json()
     else:
         raise ("Error: can not load json")
-
+    # repace spaces
+    out_json = {k.replace(" ", "_"): v for k, v in out_json.items()}
+    return out_json
 
 def download_json(config):
     components.html(
@@ -742,7 +744,7 @@ def main():
             metadata = load_json(file=upload_file)
             update_config(metadata)
         elif json_url:
-            metadata = load_json(url=json_url)
+            metadata = load_json(link=json_url)
             update_config(metadata)
         else:
             reset_config()
