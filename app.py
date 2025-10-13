@@ -408,6 +408,7 @@ def validate_columns():
     for key in required_columns:
         value = st.session_state[key]
         type = column_types[key]
+        key = key.replace('_', ' ')
         if type in ["list[str]", "list[dict]"]:
             if len(value) == 0:
                 st.error(f"Please enter a valid {key}.")
@@ -473,7 +474,7 @@ def create_element(
     options=[],
     type="str",
 ):
-    if label in required_columns:
+    if key in required_columns:
         st.write(f"{label}*")
     else:
         st.write(label)
@@ -622,7 +623,7 @@ def displayPDF(link="", pdf=None, height=1200):
 def submit_form():
     col1, col2 = st.columns(2)
     with col1:
-        submit = st.form_submit_button("Submit")
+        submit = st.form_submit_button("Submit PR")
     with col2:
         download = st.form_submit_button("Download")
 
@@ -630,12 +631,12 @@ def submit_form():
         if validate_columns():
             config = create_json()
             config = {key.replace('_', ' '): value for key, value in config.items()}
-        if download:
-            download_json(config)
-        elif submit:
-            update_pr(config)
+            if download:
+                download_json(config)
+            elif submit:
+                update_pr(config)
         else:
-            raise ("error")
+            st.error("Please fill all the required fields.")
 
 
 def main():
