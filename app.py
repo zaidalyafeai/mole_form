@@ -578,7 +578,7 @@ def download_button(config):
     <html>
     <head>
     <title>Start Auto Download file</title>
-    <script src="http://code.jquery.com/jquery-3.2.1.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.2.1.min.js"></script>
     <script>
     $('<a href="data:text/json;base64,{b64}" download="{create_name(config['Name'])}.json">')[0].click()
     </script>
