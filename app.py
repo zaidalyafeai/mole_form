@@ -597,6 +597,10 @@ def load_json(file=None, link=""):
         raise ("Error: can not load json")
     # repace spaces
     out_json = {k.replace(" ", "_"): v for k, v in out_json.items()}
+    try:
+        st.session_state.paper_url = out_json["Paper_Link"]
+    except:
+        st.session_state.paper_url = ""
     return out_json
 
 def download_json(config):
