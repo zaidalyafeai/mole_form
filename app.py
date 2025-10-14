@@ -303,7 +303,7 @@ def update_pr(new_dataset):
         local_repo.git.pull("origin", "main")
         # Commit and push changes
         local_repo.git.add(FILE_PATH)
-        local_repo.git.commit("-m", f"Creating {FILE_PATH}.json")
+        local_repo.git.commit("-m", f"Creating {FILE_PATH}")
         local_repo.git.push("--set-upstream", "origin", BRANCH_NAME)
 
     # if the PR doesn't exist
@@ -417,10 +417,10 @@ def validate_columns():
             if value == "":
                 st.error(f"Please enter a valid {key}.")
                 break
-        elif type == "url":
-            if not validate_url(value):
-                st.error(f"Please enter a valid {key}.")
-                break
+        # elif type == "url":
+        #     if not validate_url(value):
+        #         st.error(f"Please enter a valid {key}.")
+        #         break
         elif type == "int":
             if value == 0:
                 st.error(f"Please enter a valid {key}.")
@@ -707,10 +707,10 @@ def main():
         """
     This is the MOLE form to that allows users to annotate metadata of datasets manually or using AI.
     - There are three options
-        - 🦚 Manual Annotation: You can have to insert all the metadata manually.
+        - 🦚 Manual Annotation: You have to insert all the metadata manually.
         - 👾 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
         - 🚥 Load Annotation: Use this option to load a saved metadata annotation. 
-    If you have face any issues post them on [GitHub](https://github.com/IVUL-KAUST/MOLE/issues).
+    If you face any issues post them on [GitHub](https://github.com/ARBML/masader/issues).
     """,
     )
 
@@ -819,7 +819,7 @@ def main():
             with st.container(height=height):
                 with st.form(key="dataset_form", border=False):
                     create_element(
-                        "GitHub username*", key="gh_username", value="zaidalyafeai"
+                        "GitHub username*", key="gh_username", value=""
                     )
                     for key in columns:
                         if key == "annotations_from_paper":
