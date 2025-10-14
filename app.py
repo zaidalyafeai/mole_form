@@ -405,6 +405,7 @@ def create_name(name):
 def validate_columns():
     if not validate_github(st.session_state["gh_username"].strip()):
         st.error("Please enter a valid GitHub username.")
+        return False
     for key in required_columns:
         value = st.session_state[key]
         type = column_types[key]
