@@ -707,7 +707,7 @@ def submit_form():
 def main():
     st.info(
         """
-    This is the MOLE form to that allows users to annotate metadata of datasets manually or using AI.
+    This is the Masader form to that allows users to annotate metadata of datasets manually or using AI.
     - There are three options
         - 🦚 Manual Annotation: You have to insert all the metadata manually.
         - 👾 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
