@@ -403,34 +403,28 @@ def create_name(name):
 
 
 def validate_columns():
+    """Validate required columns and return list of error messages."""
+    errors = []
+    
     if not validate_github(st.session_state["gh_username"].strip()):
-        st.error("Please enter a valid GitHub username.")
-        return False
+        errors.append("Please enter a valid GitHub username.")
+    
     for key in required_columns:
         value = st.session_state[key]
         type = column_types[key]
-        key = key.replace('_', ' ')
+        display_key = key.replace('_', ' ')
+        
         if type in ["list[str]", "list[dict]"]:
             if len(value) == 0:
-                st.error(f"Please enter a valid {key}.")
-                break
+                errors.append(f"Please enter a valid {display_key}.")
         elif type == "str":
             if value == "":
-                st.error(f"Please enter a valid {key}.")
-                break
-        # elif type == "url":
-        #     if not validate_url(value):
-        #         st.error(f"Please enter a valid {key}.")
-        #         break
+                errors.append(f"Please enter a valid {display_key}.")
         elif type == "int":
             if value == 0:
-                st.error(f"Please enter a valid {key}.")
-                break
-        else:
-            continue
-    else:
-        return True
-    return False
+                errors.append(f"Please enter a valid {display_key}.")
+    
+    return errors
 
 
 def create_json():
@@ -685,6 +679,9 @@ def displayPDF(link="", pdf=None, height=1200):
 
 @st.fragment
 def submit_form():
+    # Error placeholder at the top
+    error_container = st.container()
+    
     col1, col2 = st.columns(2)
     with col1:
         submit = st.form_submit_button("Submit PR")
@@ -692,7 +689,8 @@ def submit_form():
         download = st.form_submit_button("Download")
 
     if submit or download:
-        if validate_columns():
+        errors = validate_columns()
+        if not errors:
             config = create_json()
             config = {key.replace('_', ' '): value for key, value in config.items()}
             if download:
@@ -700,7 +698,10 @@ def submit_form():
             elif submit:
                 update_pr(config)
         else:
-            st.error("Please fill all the required fields.")
+            with error_container:
+                st.error("**Validation Errors:** Please fix the following issues:")
+                for error in errors:
+                    st.error(f"• {error}")
 
 
 def main():
