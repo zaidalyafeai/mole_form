@@ -34,7 +34,8 @@ GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL")
 import requests
 
 # Example Usage
-mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi"])
+# mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi"])
+mode = "ar"
 
 try:
     schema = requests.post(f"{MOLE_URL}/schema", data={"name": mode}).json()
@@ -737,10 +738,18 @@ def main():
     st.info(
         """
     This is the Masader form to that allows users to annotate metadata of datasets manually or using AI.
-    - There are three options
-        - 🦚 Manual Annotation: You have to insert all the metadata manually.
-        - 👾 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
-        - 🚥 Load Annotation: Use this option to load a saved metadata annotation. 
+    There are three options:
+    - 🦚 Manual Annotation: You have to insert all the metadata manually.
+    - 👾 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
+    - 🚥 Load Annotation: Use this option to load a saved metadata annotation. 
+
+    Please consider the following before annotating the dataset:
+
+    - Check the dataset does not exist in the catelouge using the search [Masader](https://arbml.github.io/masader/search)
+    - The dataset must be accessible using a direct link to the repository
+    - You have a valid GitHub username
+
+    Once you submit the dataset, we will send a PR, make sure you follow up there if you have any questions. 
     If you face any issues post them on [GitHub](https://github.com/ARBML/masader/issues).
     """,
     )
