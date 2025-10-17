@@ -146,10 +146,16 @@ def update_session_config(json_data):
                 for i, subset in enumerate(subsets):
                     for subkey in subset:
                         if subkey in column_types:
-                            if column_types[subkey] == "float":
-                                st.session_state[f"{column}_{i}_{subkey}"] = float(subset[subkey])
+                            if "options" in schema[subkey]:
+                                if subset[subkey] in schema[subkey]["options"]:
+                                    st.session_state[f"{column}_{i}_{subkey}"] = subset[subkey]
+                                else:
+                                    st.session_state[f"{column}_{i}_{subkey}"] = schema[subkey][
+                                        "options"
+                                    ][-1]
                             else:
                                 st.session_state[f"{column}_{i}_{subkey}"] = subset[subkey]
+                    st.session_state[f"num_fields_{column}"]  += 1
             else:
                 for subkey in keys:
                     if subkey in schema:
@@ -166,7 +172,13 @@ def update_session_config(json_data):
         elif type == "bool":
             st.session_state[column] = bool(json_data[column])
         else:
-            st.session_state[column] = json_data[column]
+            if "options" in schema[column]:
+                if json_data[column] in schema[column]["options"]:
+                    st.session_state[column] = json_data[column]
+                else:
+                    st.session_state[column] = schema[column]["options"][-1]
+            else:
+                st.session_state[column] = json_data[column]
 
 
 def update_config(config, update_url=True):
@@ -184,44 +196,45 @@ def update_config(config, update_url=True):
             config['annotations_from_paper'][column] = 1
     update_session_config(config)
 
+def add_field(c):
+    st.session_state[f"num_fields_{c}"] += 1
 
-def render_list_dict(c, type):
+def remove_field(c):
+    if st.session_state[f"num_fields_{c}"] > 0:
+        index = st.session_state[f"num_fields_{c}"] - 1
+        st.session_state[f"num_fields_{c}"] = index
+
+        for key in st.session_state:
+            if key.startswith(f"{c}_{index}"):
+                del st.session_state[key]
+
+def add_list_dict(c, type, i):
     # list[dict[Name, Volume, Unit, Dialect]]
     type = type.replace("list[dict[", "")
     type = type.replace("]]", "")
     keys = [key.strip() for key in type.split(",")]
-    i = 0
-
-    while True:
-        cols = st.columns(len(keys))
-        first_elem = None
-        for j, subkey in enumerate(keys):
-            elem = None
-            with cols[j]:
-                if subkey in schema:
-                    if "options" in schema[subkey]:
-                        options = schema[subkey]["options"]
-                        elem = st.selectbox(
-                            subkey, options=options, key=f"{c}_{i}_{subkey}"
+    cols = st.columns(len(keys))
+    for j, subkey in enumerate(keys):
+        with cols[j]:
+            if subkey in schema:
+                if "options" in schema[subkey]:
+                    options = schema[subkey]["options"]
+                    st.selectbox(
+                        subkey, options=options, key=f"{c}_{i}_{subkey}"
+                    )
+                else:
+                    type = column_types[subkey]
+                    if type == "float":
+                        st.number_input(
+                            subkey,
+                            key=f"{c}_{i}_{subkey}",
+                            step=0.1,
                         )
                     else:
-                        type = column_types[subkey]
-                        if type == "float":
-                            elem = st.number_input(
-                                subkey,
-                                key=f"{c}_{i}_{subkey}",
-                                step=0.1,
-                            )
-                        else:
-                            elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
-                else:
-                    elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
-            if j == 0:
-                first_elem = elem
-        if first_elem:
-            i += 1
-        else:
-            break
+                        st.text_input(subkey, key=f"{c}_{i}_{subkey}")
+            else:
+                # elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
+                raise Exception(f"Invalid key {subkey}")
 
 
 def update_pr(new_dataset):
@@ -459,6 +472,16 @@ def create_json():
             )
     return config
 
+@st.fragment
+def process_form(key, type):
+    # Display all existing fields
+    for i in range(st.session_state[f"num_fields_{key}"]):
+        add_list_dict(key, type, i)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.form_submit_button("➕ Add", key=f"add_field_{key}", on_click=add_field, args=(key,))
+    with col2:
+        st.form_submit_button("❌ Remove", key=f"remove_field_{key}", on_click=remove_field, args=(key,))  
 
 def create_element(
     label,
@@ -519,12 +542,18 @@ def create_element(
             )
 
     elif "list[dict[" in type:
+        # Initialize per-column field counter
+        if f"num_fields_{key}" not in st.session_state:
+            st.session_state[f"num_fields_{key}"] = 0
+            
         with st.expander(f"Add {key}"):
             st.caption(
                 "Use this field to add dialect subsets of the dataset. For example if the dataset has 1,000 sentences in the Yemeni dialect.\
                         For example take a look at the [shami subsets](https://github.com/ARBML/masader/tree/main/datasets/shami.json)."
             )
-            render_list_dict(key, type)
+            
+            process_form(key, type)  
+
     else:
         if type == "bool":
             st.checkbox(key, key=key, label_visibility="collapsed", help=help)
