@@ -16,6 +16,7 @@ import base64
 
 MOLE_URL = "https://mextract-production.up.railway.app"
 # MOLE_URL = "http://0.0.0.0:8000"
+DATASETS_URL = "https://web-production-25a2.up.railway.app/datasets?features=Name"
 
 
 st.set_page_config(
@@ -39,6 +40,13 @@ mode = "ar"
 
 try:
     schema = requests.post(f"{MOLE_URL}/schema", data={"name": mode}).json()
+except Exception as e:
+    print("Error:", str(e))
+
+try:
+    response = requests.get(DATASETS_URL)
+    if response.status_code == 200:
+        datasets = response.json()
 except Exception as e:
     print("Error:", str(e))
 
@@ -733,6 +741,20 @@ def submit_form():
                 for error in errors:
                     st.error(f"• {error}")
 
+@st.fragment
+def search_datasets():
+    """Quick search for existing datasets without form submission."""
+    st.caption("Before submitting a new dataset, please check if it already exists in the catalogue.")
+    data_options = [dataset.get("Name").lower().strip() for dataset in datasets]
+    data_options = sorted(data_options)
+    data_options = [""] + data_options
+    st.selectbox(
+        "",
+        options=data_options,
+        key="dataset_search",
+        label_visibility="collapsed",
+        placeholder="Search datasets..."
+    )
 
 def main():
     st.info(
@@ -753,6 +775,9 @@ def main():
     If you face any issues post them on [GitHub](https://github.com/ARBML/masader/issues).
     """,
     )
+    # Search existing datasets
+    search_datasets()
+    st.divider()
 
     # - Check the dataset does not exist in the catelouge using the search [Masader](https://arbml.github.io/masader/search)
     # - You have a valid GitHub username
