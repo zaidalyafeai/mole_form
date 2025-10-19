@@ -135,6 +135,10 @@ def update_session_config(json_data):
         type = column_types[column]
         if type == "list[str]":
             values = json_data[column]
+            if "options" in schema[column]:
+                values = [option for option in values if option in schema[column]["options"]]
+                if len(values) == 0:
+                    values = [schema[column]["options"][-1]]
             st.session_state[column] = values
 
         elif "list[dict[" in type:
