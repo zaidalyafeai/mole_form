@@ -16,7 +16,7 @@ import base64
 
 MOLE_URL = "https://mextract-production.up.railway.app"
 # MOLE_URL = "http://0.0.0.0:8000"
-DATASETS_URL = "https://web-production-25a2.up.railway.app/datasets?features=Name"
+DATASETS_URL = "https://web-production-25a2.up.railway.app/datasets?features=Name,Paper Title,Paper Link"
 
 
 st.set_page_config(
@@ -752,13 +752,17 @@ def search_datasets():
     data_options = [dataset.get("Name").lower().strip() for dataset in datasets]
     data_options = sorted(data_options)
     data_options = [""] + data_options
-    st.selectbox(
+    selected = st.selectbox(
         "",
         options=data_options,
         key="dataset_search",
         label_visibility="collapsed",
         placeholder="Search datasets..."
     )
+    if selected:
+        selected_dataset = [dataset for dataset in datasets if dataset.get("Name").lower().strip() == selected][0]
+        st.write(f"Paper Title: {selected_dataset['Paper Title']}")
+        st.write(f"Paper Link: {selected_dataset['Paper Link']}")
 
 def main():
     st.info(
