@@ -724,6 +724,12 @@ def submit_form():
     # Error placeholder at the top
     error_container = st.container()
     
+    # License agreement checkbox
+    license_agreed = st.checkbox(
+        "I agree the metadata can be used for research purposes",
+        key="license_agreement"
+    )
+    
     col1, col2 = st.columns(2)
     with col1:
         submit = st.form_submit_button("Submit PR")
@@ -731,6 +737,10 @@ def submit_form():
         download = st.form_submit_button("Download")
 
     if submit or download:
+        if submit and not license_agreed:
+            with error_container:
+                st.error("Please agree to the license terms before submitting.")
+            return
         errors = validate_columns()
         if not errors:
             config = create_json()
