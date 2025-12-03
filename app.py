@@ -14,8 +14,8 @@ from streamlit_pdf_viewer import pdf_viewer
 import streamlit.components.v1 as components
 import base64
 
-MOLE_URL = "https://mextract-production.up.railway.app"
-# MOLE_URL = "http://0.0.0.0:8000"
+# MOLE_URL = "https://mextract-production.up.railway.app"
+MOLE_URL = "http://0.0.0.0:8080"
 DATASETS_URL = "https://web-production-25a2.up.railway.app/datasets?features=Name,Paper Title,Paper Link"
 
 
@@ -35,11 +35,14 @@ GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL")
 import requests
 
 # Example Usage
-# mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi"])
-mode = "ar"
+mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi"], key = "mode")
+# mode = "ar"
 
 try:
     schema = requests.post(f"{MOLE_URL}/schema", data={"name": mode}).json()
+    if "Added_By" in schema:
+        del schema["Added_By"]
+    print(mode)
 except Exception as e:
     print("Error:", str(e))
 
@@ -66,8 +69,8 @@ for c in schema:
     if schema[c]["answer_min"] > 0:
         required_columns.append(c)
 
-use_annotations_paper = False
-# use_annotations_paper = st.toggle("Enable annotations from paper", value = True)
+# use_annotations_paper = False
+use_annotations_paper = st.toggle("Enable annotations from paper", value = True)
 
 columns = list(schema.keys())
 
@@ -417,6 +420,7 @@ def reset_config():
     st.session_state.show_form = False
     st.session_state.paper_url = ""
     st.session_state.paper_pdf = None
+    st.session_state.num_fields_Subsets = 1
 
 
 def create_name(name):
@@ -432,8 +436,8 @@ def validate_columns():
     """Validate required columns and return list of error messages."""
     errors = []
     
-    if not validate_github(st.session_state["gh_username"].strip()):
-        errors.append("Please enter a valid GitHub username.")
+    # if not validate_github(st.session_state["gh_username"].strip()):
+    #     errors.append("Please enter a valid GitHub username.")
     
     for key in required_columns:
         value = st.session_state[key]
@@ -556,7 +560,9 @@ def create_element(
 
     elif "list[dict[" in type:
         # Initialize per-column field counter
+        print(st.session_state)
         if f"num_fields_{key}" not in st.session_state:
+            print(f"initializing num_fields_{key}")
             st.session_state[f"num_fields_{key}"] = 0
             
         with st.expander(f"Add {key}"):
@@ -564,7 +570,6 @@ def create_element(
                 "Use this field to add dialect subsets of the dataset. For example if the dataset has 1,000 sentences in the Yemeni dialect.\
                         For example take a look at the [shami subsets](https://github.com/ARBML/masader/tree/main/datasets/shami.json)."
             )
-            
             process_form(key, type)  
 
     else:
@@ -635,6 +640,9 @@ def load_json(file=None, link=""):
     else:
         raise ("Error: can not load json")
     # repace spaces
+    if "schema" in out_json:
+        st.session_state.mode = out_json["schema"]
+        out_json = out_json['metadata']
     out_json = {k.replace(" ", "_"): v for k, v in out_json.items()}
     try:
         st.session_state.paper_url = out_json["Paper_Link"]
@@ -794,8 +802,8 @@ def main():
     """,
     )
     # Search existing datasets
-    search_datasets()
-    st.divider()
+    # search_datasets()
+    # st.divider()
 
     # - Check the dataset does not exist in the catelouge using the search [Masader](https://arbml.github.io/masader/search)
     # - You have a valid GitHub username
@@ -815,7 +823,7 @@ def main():
     options = st.selectbox(
         "Annotation Options",
         ["👾 AI Annotation", "🦚 Manual Annotation", "🚥 Load Annotation"],
-        index=1,
+        index=2,
         on_change=reset_config,
     )
 
@@ -901,9 +909,9 @@ def main():
         with col1:
             with st.container(height=height):
                 with st.form(key="dataset_form", border=False):
-                    create_element(
-                        "GitHub username*", key="gh_username", value=""
-                    )
+                    # create_element(
+                    #     "GitHub username*", key="gh_username", value=""
+                    # )
                     for key in columns:
                         if key == "annotations_from_paper":
                             continue
