@@ -7,6 +7,8 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
+st.set_page_config(initial_sidebar_state="collapsed")
+
 load_dotenv()
 import requests
 DATASETS_URL = "https://web-production-25a2.up.railway.app/datasets?features=Name,Paper Title,Paper Link"
