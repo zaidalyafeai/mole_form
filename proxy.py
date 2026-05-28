@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
+from contextlib import asynccontextmanager
 from typing import Dict, Iterable, Tuple
 
 import httpx
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import StreamingResponse
+from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket
+
+logger = logging.getLogger(__name__)
 
 API_BACKEND = os.environ.get("API_BACKEND", "http://127.0.0.1:8001")
 STREAMLIT_BACKEND = os.environ.get("STREAMLIT_BACKEND", "http://127.0.0.1:8501")
@@ -24,6 +28,14 @@ HOP_BY_HOP = {
     "transfer-encoding",
     "upgrade",
 }
+
+STREAM_ERRORS = (
+    httpx.ReadError,
+    httpx.RemoteProtocolError,
+    httpx.StreamError,
+    httpx.WriteError,
+    asyncio.CancelledError,
+)
 
 
 def is_api_path(path: str) -> bool:
@@ -48,35 +60,51 @@ def filtered_headers(headers: Iterable[Tuple[str, str]]) -> Dict[str, str]:
     }
 
 
-async def proxy_http(request: Request) -> StreamingResponse:
+@asynccontextmanager
+async def lifespan(app: Starlette):
+    app.state.http = httpx.AsyncClient(
+        timeout=httpx.Timeout(300.0),
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+    )
+    try:
+        yield
+    finally:
+        await app.state.http.aclose()
+
+
+async def proxy_http(request: Request) -> Response:
+    client: httpx.AsyncClient = request.app.state.http
     backend = pick_backend(request.url.path)
     url = f"{backend}{request.url.path}"
     if request.url.query:
         url = f"{url}?{request.url.query}"
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-        upstream = await client.send(
-            client.build_request(
-                request.method,
-                url,
-                headers=filtered_headers(request.headers.items()),
-                content=await request.body(),
-            ),
-            stream=True,
-        )
+    upstream = await client.send(
+        client.build_request(
+            request.method,
+            url,
+            headers=filtered_headers(request.headers.items()),
+            content=await request.body(),
+        ),
+        stream=True,
+    )
 
-        async def stream():
-            try:
-                async for chunk in upstream.aiter_raw():
-                    yield chunk
-            finally:
-                await upstream.aclose()
+    async def stream():
+        try:
+            async for chunk in upstream.aiter_raw():
+                if await request.is_disconnected():
+                    break
+                yield chunk
+        except STREAM_ERRORS:
+            pass
+        finally:
+            await upstream.aclose()
 
-        return StreamingResponse(
-            stream(),
-            status_code=upstream.status_code,
-            headers=filtered_headers(upstream.headers.items()),
-        )
+    return StreamingResponse(
+        stream(),
+        status_code=upstream.status_code,
+        headers=filtered_headers(upstream.headers.items()),
+    )
 
 
 async def proxy_websocket(websocket: WebSocket) -> None:
@@ -133,13 +161,16 @@ async def proxy_websocket(websocket: WebSocket) -> None:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
-            for task in done:
-                task.result()
+            await asyncio.gather(*done, return_exceptions=True)
     except Exception:
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 app = Starlette(
+    lifespan=lifespan,
     routes=[
         Route(
             "/{path:path}",
@@ -147,5 +178,5 @@ app = Starlette(
             methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
         ),
         WebSocketRoute("/{path:path}", proxy_websocket),
-    ]
+    ],
 )
