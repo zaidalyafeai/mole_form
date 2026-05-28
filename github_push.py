@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlencode
 
 from dotenv import load_dotenv
 from git import GitCommandError, Repo
@@ -69,6 +72,39 @@ def unwrap_metadata(payload: dict) -> dict:
     return payload
 
 
+def raw_github_json_url(repo_name: str, branch_name: str, file_path: str) -> str:
+    return f"https://raw.githubusercontent.com/{repo_name}/{branch_name}/{file_path}"
+
+
+def form_edit_url(raw_json_url: str) -> str | None:
+    base = (os.getenv("FORM_BASE_URL") or "").strip().rstrip("/")
+    if not base:
+        return None
+    params = urlencode({"annotation_type": "load", "json_url": raw_json_url})
+    return f"{base}?{params}"
+
+
+def build_pr_body(
+    github_username: str,
+    dataset_name: str,
+    *,
+    repo_name: str,
+    branch_name: str,
+    file_path: str,
+) -> str:
+    raw_url = raw_github_json_url(repo_name, branch_name, file_path)
+    edit_url = form_edit_url(raw_url)
+
+    body = (
+        f"This is a pull request by @{github_username} to add "
+        f"{dataset_name} to the catalogue.\n\n"
+    )
+    if edit_url:
+        body += f"[Edit this submission in the Masader Form]({edit_url})\n\n"
+    body += f"Metadata JSON: [`{file_path}`]({raw_url})"
+    return body
+
+
 def remote_branch_exists(repo, branch_name: str) -> bool:
     try:
         repo.get_git_ref(f"heads/{branch_name}")
@@ -114,10 +150,14 @@ def push_metadata_to_github(
     github_token, git_user_name, git_user_email = github_credentials_ok()
     data_name = normalize_dataset_name(dataset_name)
     branch_name = f"add-{data_name}"
+    file_path = f"datasets/{data_name}.json"
     pr_title = f"Adding {dataset_name} to the catalogue"
-    pr_body = (
-        f"This is a pull request by @{github_username} to add "
-        f"{dataset_name} to the catalogue."
+    pr_body = build_pr_body(
+        github_username,
+        dataset_name,
+        repo_name=repo_name,
+        branch_name=branch_name,
+        file_path=file_path,
     )
 
     try:
@@ -154,7 +194,6 @@ def push_metadata_to_github(
         ) from exc
 
     local_repo = Repo(local_path)
-    file_path = f"datasets/{data_name}.json"
 
     if branch_exists_on_remote:
         local_repo.git.fetch("origin", branch_name)
@@ -194,6 +233,7 @@ def push_metadata_to_github(
         ) from exc
 
     if open_pr:
+        open_pr.edit(body=pr_body)
         return PushResult(
             status="updated",
             branch=branch_name,
