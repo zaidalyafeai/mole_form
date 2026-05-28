@@ -5,7 +5,7 @@ STREAMLIT_PORT=8501
 API_PORT=8001
 PROXY_PORT="${PORT:-8080}"
 
-uv run uvicorn api:app --host 127.0.0.1 --port "$API_PORT" &
+uv run uvicorn api:app --host 127.0.0.1 --port "$API_PORT" --log-level warning &
 UVICORN_PID=$!
 
 uv run streamlit run app.py \
@@ -16,7 +16,8 @@ uv run streamlit run app.py \
   --client.showErrorDetails false \
   --client.toolbarMode minimal \
   --server.enableCORS false \
-  --server.enableXsrfProtection false &
+  --server.enableXsrfProtection false \
+  --server.enableWebsocketCompression false &
 STREAMLIT_PID=$!
 
 cleanup() {
@@ -26,4 +27,4 @@ trap cleanup EXIT INT TERM
 
 sleep 3
 
-exec uv run uvicorn proxy:app --host 0.0.0.0 --port "$PROXY_PORT"
+exec uv run uvicorn proxy:app --host 0.0.0.0 --port "$PROXY_PORT" --log-level warning --no-access-log
