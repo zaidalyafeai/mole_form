@@ -199,6 +199,50 @@ def default_for_column(column: str):
     return ""
 
 
+def coerce_value_for_column(column: str, value):
+    answer_type = column_types[column]
+    if "options" not in schema[column]:
+        return value
+
+    options = schema[column]["options"]
+
+    if answer_type == "str":
+        if value in options:
+            return value
+        if isinstance(value, str):
+            lowered = value.lower()
+            for option in options:
+                if option.lower() == lowered:
+                    return option
+        return default_for_column(column)
+
+    if answer_type == "list[str]":
+        if not isinstance(value, list):
+            return default_for_column(column)
+        coerced = []
+        for item in value:
+            if item in options:
+                coerced.append(item)
+                continue
+            if isinstance(item, str):
+                lowered = item.lower()
+                for option in options:
+                    if option.lower() == lowered:
+                        coerced.append(option)
+                        break
+        return coerced if coerced else default_for_column(column)
+
+    return value
+
+
+def ensure_widget_value(column: str, options: list) -> None:
+    if column not in st.session_state or not options:
+        return
+    coerced = coerce_value_for_column(column, st.session_state[column])
+    if coerced != st.session_state[column]:
+        st.session_state[column] = coerced
+
+
 def update_session_config(json_data):
     annotations = json_data.get("annotations_from_paper", {})
     for column in columns:
@@ -206,7 +250,7 @@ def update_session_config(json_data):
             st.session_state[f"annot_{column}"] = annotations.get(column, 1)
         type = column_types[column]
         if type == "list[str]":
-            values = config_value(json_data, column)
+            values = coerce_value_for_column(column, config_value(json_data, column))
             st.session_state[column] = values
 
         elif "list[dict[" in type:
@@ -229,10 +273,13 @@ def update_session_config(json_data):
                 for i, subset in enumerate(subsets):
                     for subkey in subset:
                         if subkey in column_types:
+                            raw_value = subset[subkey]
+                            if subkey in schema and "options" in schema[subkey]:
+                                raw_value = coerce_value_for_column(subkey, raw_value)
                             if column_types[subkey] == "float":
-                                st.session_state[f"{column}_{i}_{subkey}"] = float(subset[subkey])
+                                st.session_state[f"{column}_{i}_{subkey}"] = float(raw_value)
                             else:
-                                st.session_state[f"{column}_{i}_{subkey}"] = subset[subkey]
+                                st.session_state[f"{column}_{i}_{subkey}"] = raw_value
             else:
                 for subkey in keys:
                     if subkey in schema:
@@ -249,7 +296,9 @@ def update_session_config(json_data):
         elif type == "bool":
             st.session_state[column] = bool(config_value(json_data, column))
         else:
-            st.session_state[column] = config_value(json_data, column)
+            st.session_state[column] = coerce_value_for_column(
+                column, config_value(json_data, column)
+            )
 
 
 def query_param(name: str, default: str = "") -> str:
@@ -619,13 +668,16 @@ def create_element(
     elif type in ["int", "year"]:
         st.number_input(key, key=key, label_visibility="collapsed", step=1, help=help)
     elif (len(options) > 0 and len(options) <= 5) and type == "str":
+        ensure_widget_value(key, options)
         st.radio(key, options=options, key=key, label_visibility="collapsed", help=help)
     elif len(options) > 0 and type == "str":
+        ensure_widget_value(key, options)
         st.selectbox(
             key, options=options, key=key, label_visibility="collapsed", help=help
         )
     elif type == "list[str]":
         if len(options) > 0:
+            ensure_widget_value(key, options)
             st.multiselect(
                 key, options=options, key=key, label_visibility="collapsed", help=help
             )
