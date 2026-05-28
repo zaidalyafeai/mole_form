@@ -1,10 +1,13 @@
+from __future__ import annotations
+
 import streamlit as st  # ignore
 import requests
 import re
 import json
 import os
 import subprocess
-from github import Github
+from pathlib import Path
+from github import Auth, Github, GithubException
 from git import Repo
 from datetime import date
 from constants import *
@@ -25,10 +28,20 @@ st.set_page_config(
 )
 "# 📮 :rainbow[Masader Form]"
 
-load_dotenv()  # Load environment variables from a .env file
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-GIT_USER_NAME = os.getenv("GIT_USER_NAME")
-GIT_USER_EMAIL = os.getenv("GIT_USER_EMAIL")
+_APP_DIR = Path(__file__).resolve().parent
+
+
+def load_github_credentials():
+    load_dotenv(_APP_DIR / ".env", override=True)
+    return (
+        (os.getenv("GITHUB_TOKEN") or "").strip(),
+        (os.getenv("GIT_USER_NAME") or "").strip(),
+        (os.getenv("GIT_USER_EMAIL") or "").strip(),
+    )
+
+
+load_dotenv(_APP_DIR / ".env", override=True)
+GITHUB_TOKEN, GIT_USER_NAME, GIT_USER_EMAIL = load_github_credentials()
 
 import requests
 
@@ -36,10 +49,17 @@ import requests
 mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi"])
 
 try:
-    schema = requests.post(f"{MOLE_URL}/schema", data={"name": mode}).json()
-    schema = json.loads(schema)
+    schema_payload = requests.post(
+        f"{MOLE_URL}/schema", data={"name": mode}, timeout=60
+    ).json()
+    schema = (
+        json.loads(schema_payload)
+        if isinstance(schema_payload, str)
+        else schema_payload
+    )
 except Exception as e:
-    print("Error:", str(e))
+    st.error(f"Failed to load schema: {e}")
+    st.stop()
 
 column_types = {}
 for c in schema:
@@ -61,6 +81,65 @@ use_annotations_paper = False
 # use_annotations_paper = st.toggle("Enable annotations from paper", value = True)
 
 columns = list(schema.keys())
+
+
+def canonical_column_key(key: str) -> str | None:
+    if key in columns:
+        return key
+    spaced = key.replace("_", " ")
+    if spaced in columns:
+        return spaced
+    underscored = key.replace(" ", "_")
+    if underscored in columns:
+        return underscored
+    return None
+
+
+def to_catalogue_key(key: str) -> str:
+    canonical = canonical_column_key(key)
+    return (canonical or key).replace("_", " ")
+
+
+def config_value(json_data: dict, column: str):
+    for key in (column, column.replace("_", " "), column.replace(" ", "_")):
+        if key in json_data:
+            return json_data[key]
+    return default_for_column(column)
+
+
+def normalize_config_to_schema(config: dict) -> dict:
+    normalized: dict = {}
+    for key, value in config.items():
+        if key == "annotations_from_paper":
+            if isinstance(value, dict):
+                annotations = {}
+                for ann_key, ann_value in value.items():
+                    col = canonical_column_key(ann_key)
+                    annotations[col if col else ann_key] = ann_value
+                normalized[key] = annotations
+            else:
+                normalized[key] = value
+            continue
+
+        canonical = canonical_column_key(key)
+        if not canonical:
+            normalized[key] = value
+            continue
+
+        existing = normalized.get(canonical)
+        if existing is None or (not existing and value):
+            normalized[canonical] = value
+    return normalized
+
+
+def config_to_catalogue_format(config: dict) -> dict:
+    catalogue: dict = {}
+    for key, value in config.items():
+        if key == "annotations_from_paper" and isinstance(value, dict):
+            catalogue[key] = {to_catalogue_key(k): v for k, v in value.items()}
+        else:
+            catalogue[to_catalogue_key(key)] = value
+    return catalogue
 
 
 def validate_github(username):
@@ -117,19 +196,42 @@ def validate_comma_separated_number(number: str) -> bool:
     return bool(re.fullmatch(pattern, number))
 
 
+def default_for_column(column: str):
+    answer_type = column_types[column]
+    if "options" in schema[column]:
+        if answer_type in ["str", "url", "bool"]:
+            return schema[column]["options"][-1]
+        if answer_type == "list[str]":
+            return [schema[column]["options"][-1]]
+    if answer_type == "list[str]":
+        return []
+    if "list[dict" in answer_type:
+        return []
+    if answer_type == "year":
+        return date.today().year
+    if answer_type == "int":
+        return 0
+    if answer_type == "float":
+        return 0.0
+    if answer_type == "bool":
+        return False
+    return ""
+
+
 def update_session_config(json_data):
+    annotations = json_data.get("annotations_from_paper", {})
     for column in columns:
         if use_annotations_paper:
-            st.session_state[f"annot_{column}"] = json_data["annotations_from_paper"][
-                column
-            ]
+            st.session_state[f"annot_{column}"] = annotations.get(column, 1)
         type = column_types[column]
         if type == "list[str]":
-            values = json_data[column]
+            values = config_value(json_data, column)
             st.session_state[column] = values
 
         elif "list[dict[" in type:
-            subsets = json_data[column]
+            subsets = config_value(json_data, column)
+            if not isinstance(subsets, list):
+                subsets = []
             keys = type.replace("list[dict[", "").replace("]]", "").split(",")
             keys = [key.strip() for key in keys]
             i = 0
@@ -164,25 +266,42 @@ def update_session_config(json_data):
                             else:
                                 st.session_state[f"{column}_0_{subkey}"] = ""
         elif type == "bool":
-            st.session_state[column] = bool(json_data[column])
+            st.session_state[column] = bool(config_value(json_data, column))
         else:
-            st.session_state[column] = json_data[column]
+            st.session_state[column] = config_value(json_data, column)
+
+
+def query_param(name: str, default: str = "") -> str:
+    value = st.query_params.get(name, default)
+    if value is None:
+        return default
+    return str(value).strip()
 
 
 def update_config(config, update_url=True):
+    if not config:
+        return
     if "metadata" in config:
         config = config["metadata"]
 
+    config = normalize_config_to_schema(config)
+
     if update_url:
-        if "Paper Link" in config:
-            st.session_state.paper_url = config["Paper Link"]
+        paper_col = next(
+            (c for c in columns if c.replace("_", " ").lower() == "paper link"),
+            None,
+        )
+        if paper_col and paper_col in config:
+            st.session_state.paper_url = config[paper_col]
 
     st.session_state.show_form = True
-    if 'annotations_from_paper' not in config:
-        config['annotations_from_paper'] = {}
-        for column in columns:
-            config['annotations_from_paper'][column] = 1
-    update_session_config(config)
+    merged = create_default_json()
+    merged.update(config)
+    if "annotations_from_paper" not in merged:
+        merged["annotations_from_paper"] = {}
+    for column in columns:
+        merged["annotations_from_paper"].setdefault(column, 1)
+    update_session_config(merged)
 
 
 def render_list_dict(c, type):
@@ -224,7 +343,26 @@ def render_list_dict(c, type):
             break
 
 
+def github_credentials_ok() -> bool:
+    token, user_name, user_email = load_github_credentials()
+    if not token:
+        st.error(
+            "GITHUB_TOKEN is not set. Add it to `.env` in the project root "
+            "(see https://github.com/settings/tokens), then restart Streamlit."
+        )
+        return False
+    if not user_name or not user_email:
+        st.error("GIT_USER_NAME and GIT_USER_EMAIL must be set in `.env`.")
+        return False
+    return True
+
+
 def update_pr(new_dataset):
+    if not github_credentials_ok():
+        return
+
+    github_token, git_user_name, git_user_email = load_github_credentials()
+
     PRS = []
     if os.path.exists("prs.json"):
         with open("prs.json", "r") as f:
@@ -244,16 +382,29 @@ def update_pr(new_dataset):
     PR_TITLE = f"Adding {new_dataset['Name']} to the catalogue"
     PR_BODY = f"This is a pull request by @{st.session_state['gh_username']} to add a {new_dataset['Name']} to the catalogue."
 
-    # Initialize GitHub client
-    g = Github(GITHUB_TOKEN)
-    repo = g.get_repo(REPO_NAME)
+    try:
+        g = Github(auth=Auth.Token(github_token))
+        repo = g.get_repo(REPO_NAME)
+    except GithubException as exc:
+        if exc.status == 401:
+            st.error(
+                "GitHub authentication failed (401). Check `GITHUB_TOKEN` in `.env` "
+                "(project root). If you recently updated `.env`, restart Streamlit. "
+                "If a shell variable named `GITHUB_TOKEN` is set, it can override `.env` — "
+                "unset it or update it. Create a new token at "
+                "https://github.com/settings/tokens with **repo** access to `ARBML/masader`."
+            )
+        else:
+            message = exc.data.get("message", str(exc)) if exc.data else str(exc)
+            st.error(f"GitHub API error ({exc.status}): {message}")
+        return
 
     # setup name and email
-    os.system(f"git config --global user.email {GIT_USER_EMAIL}")
-    os.system(f"git config --global user.name {GIT_USER_NAME}")
+    os.system(f"git config --global user.email {git_user_email}")
+    os.system(f"git config --global user.name {git_user_name}")
 
     # Clone repository
-    repo_url = f"https://{GITHUB_TOKEN}@github.com/{REPO_NAME}.git"
+    repo_url = f"https://{github_token}@github.com/{REPO_NAME}.git"
     local_path = "./temp_repo"
 
     pr_exists = False
@@ -275,7 +426,14 @@ def update_pr(new_dataset):
 
     if os.path.exists(local_path):
         subprocess.run(["rm", "-rf", local_path])  # Clean up if exists
-    Repo.clone_from(repo_url, local_path)
+    try:
+        Repo.clone_from(repo_url, local_path)
+    except Exception as exc:
+        st.error(
+            f"Could not clone `{REPO_NAME}`. Check that the token can read/write the repo "
+            f"and that you have network access. ({exc})"
+        )
+        return
 
     # Modify file
     local_repo = Repo(local_path)
@@ -355,28 +513,7 @@ def get_metadata(link="", pdf=None):
 
 
 def create_default_json():
-    default_json = {}
-    for column in columns:
-        type = column_types[column]
-        if "options" in schema[column]:
-            if type in ["str", "url", "bool"]:
-                default_json[column] = schema[column]["options"][-1]
-            elif type == "list[str]":
-                default_json[column] = [schema[column]["options"][-1]]
-            else:
-                raise ()
-        elif type == "list[str]":  # no options
-            default_json[column] = []
-        elif "list[dict" in type:
-            default_json[column] = []
-        elif type == "year":
-            default_json[column] = date.today().year
-        elif type == "int":
-            default_json[column] = 0
-        elif type == "float":
-            default_json[column] = 0.0
-        else:
-            default_json[column] = ""
+    default_json = {column: default_for_column(column) for column in columns}
 
     if use_annotations_paper:
         default_json["annotations_from_paper"] = {}
@@ -391,6 +528,83 @@ def reset_config():
     st.session_state.show_form = False
     st.session_state.paper_url = ""
     st.session_state.paper_pdf = None
+    st.session_state._last_ai_paper_url = ""
+
+
+ANNOTATION_OPTIONS = [
+    "🤖 AI Annotation",
+    "🦚 Manual Annotation",
+    "🚥 Load Annotation",
+]
+URL_ANNOTATION_TYPES = {
+    "ai": "🤖 AI Annotation",
+    "manual": "🦚 Manual Annotation",
+    "load": "🚥 Load Annotation",
+}
+
+
+def annotation_index_from_url() -> int:
+    annotation_type = query_param("annotation_type").lower()
+    label = URL_ANNOTATION_TYPES.get(annotation_type)
+    if label:
+        return ANNOTATION_OPTIONS.index(label)
+    return 1
+
+
+def run_ai_extraction(paper_url: str) -> None:
+    if st.session_state.get("_last_ai_paper_url") == paper_url:
+        return
+    st.session_state._last_ai_paper_url = paper_url
+    try:
+        if "arxiv" in paper_url:
+            metadata = get_metadata(link=paper_url)
+            if metadata:
+                update_config(metadata, update_url=False)
+            else:
+                st.session_state._last_ai_paper_url = ""
+            return
+        response = requests.get(paper_url, timeout=30)
+        response.raise_for_status()
+        if response.headers.get("Content-Type") == "application/pdf":
+            pdf = (
+                paper_url.split("/")[-1],
+                response.content,
+                response.headers.get("Content-Type", "application/pdf"),
+            )
+            metadata = get_metadata(pdf=pdf)
+            if metadata:
+                update_config(metadata)
+            else:
+                st.session_state._last_ai_paper_url = ""
+        else:
+            st.error(
+                f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
+            )
+    except requests.RequestException as exc:
+        st.error(f"Failed to fetch PDF: {exc}")
+        st.session_state._last_ai_paper_url = ""
+
+
+def apply_url_query_params() -> None:
+    pdf_link = query_param("pdf_link")
+    json_url = query_param("json_url")
+    annotation_type = query_param("annotation_type").lower()
+
+    if pdf_link:
+        st.session_state.paper_url = pdf_link
+
+    if not annotation_type and not pdf_link and not json_url:
+        return
+
+    cache_key = f"{annotation_type}|{pdf_link}|{json_url}"
+    if st.session_state.get("_query_params_key") == cache_key:
+        return
+    st.session_state._query_params_key = cache_key
+
+    if annotation_type == "manual":
+        st.session_state.show_form = True
+    elif annotation_type == "ai" and pdf_link:
+        run_ai_extraction(pdf_link)
 
 
 def create_name(name):
@@ -403,32 +617,30 @@ def create_name(name):
 
 
 def validate_columns():
-    if not validate_github(st.session_state["gh_username"].strip()):
+    if not validate_github(st.session_state.get("gh_username", "").strip()):
         st.error("Please enter a valid GitHub username.")
+        return False
     for key in required_columns:
-        value = st.session_state[key]
+        label = to_catalogue_key(key)
+        value = st.session_state.get(key, default_for_column(key))
         type = column_types[key]
         if type in ["list[str]", "list[dict]"]:
             if len(value) == 0:
-                st.error(f"Please enter a valid {key}.")
-                break
+                st.error(f"Please enter a valid {label}.")
+                return False
         elif type == "str":
             if value == "":
-                st.error(f"Please enter a valid {key}.")
-                break
+                st.error(f"Please enter a valid {label}.")
+                return False
         elif type == "url":
             if not validate_url(value):
-                st.error(f"Please enter a valid {key}.")
-                break
+                st.error(f"Please enter a valid {label}.")
+                return False
         elif type == "int":
             if value == 0:
-                st.error(f"Please enter a valid {key}.")
-                break
-        else:
-            continue
-    else:
-        return True
-    return False
+                st.error(f"Please enter a valid {label}.")
+                return False
+    return True
 
 
 def create_json():
@@ -453,7 +665,7 @@ def create_json():
                 else:
                     break
         else:
-            config[column] = st.session_state[column]
+            config[column] = st.session_state.get(column, default_for_column(column))
 
     if use_annotations_paper:
         config["annotations_from_paper"] = {}
@@ -624,15 +836,11 @@ def submit_form():
         download = st.form_submit_button("Download")
 
     if submit or download:
-        if validate_columns():
-            config = create_json()
-            config = {key.replace('_', ' '): value for key, value in config.items()}
+        config = config_to_catalogue_format(create_json())
         if download:
             download_json(config)
-        elif submit:
+        elif submit and validate_columns():
             update_pr(config)
-        else:
-            raise ("error")
 
 
 def main():
@@ -642,7 +850,9 @@ def main():
     - There are three options
         - 🦚 Manual Annotation: You can have to insert all the metadata manually.
         - 👾 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
-        - 🚥 Load Annotation: Use this option to load a saved metadata annotation. 
+        - 🚥 Load Annotation: Use this option to load a saved metadata annotation.
+
+    Deep-link with query parameters: `?annotation_type=manual|ai|load` and optionally `pdf_link=<url>` or `json_url=<url>`.
     If you have face any issues post them on [GitHub](https://github.com/IVUL-KAUST/MOLE/issues).
     """,
     )
@@ -658,14 +868,12 @@ def main():
     if "paper_pdf" not in st.session_state:
         st.session_state.paper_pdf = None
 
-    # if st.query_params:
-    #     if st.query_params["json_url"]:
-    #         load_json(st.query_params["json_url"])
+    apply_url_query_params()
 
     options = st.selectbox(
         "Annotation Options",
-        ["🤖 AI Annotation", "🦚 Manual Annotation", "🚥 Load Annotation"],
-        index=1,
+        ANNOTATION_OPTIONS,
+        index=annotation_index_from_url(),
         on_change=reset_config,
     )
 
@@ -676,6 +884,7 @@ def main():
         )
         json_url = st.text_input(
             "Path to json",
+            value=query_param("json_url"),
             placeholder="For example: https://raw.githubusercontent.com/zaidalyafeai/mole_form/refs/heads/main/shami.json",
         )
 
@@ -685,7 +894,7 @@ def main():
         elif json_url:
             metadata = load_json(url=json_url)
             update_config(metadata)
-        else:
+        elif not st.session_state.show_form:
             reset_config()
 
     if options == "🤖 AI Annotation":
@@ -706,24 +915,7 @@ def main():
             metadata = get_metadata(pdf=pdf)
             update_config(metadata, update_url=False)
         elif paper_url:
-            if "arxiv" in paper_url:
-                metadata = get_metadata(link=paper_url)
-                update_config(metadata, update_url=False)
-            else:
-                response = requests.get(paper_url)
-                response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
-                if response.headers.get("Content-Type") == "application/pdf":
-                    pdf = (
-                        paper_url.split("/")[-1],
-                        response.content,
-                        response.headers.get("Content-Type", "application/pdf"),
-                    )
-                    metadata = get_metadata(pdf=pdf)
-                    update_config(metadata)
-                else:
-                    st.error(
-                        f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
-                    )
+            run_ai_extraction(paper_url)
         else:
             reset_config()
 
