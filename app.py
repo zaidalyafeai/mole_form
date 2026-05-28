@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from datetime import date
 from constants import *
-from github_push import GithubPushError, load_github_credentials, push_metadata_to_github
+from github_push import GithubPushError, load_github_credentials, push_metadata_to_github, validate_github_username
 from streamlit_tags import st_tags
 from dotenv import load_dotenv
 from streamlit_pdf_viewer import pdf_viewer
@@ -129,14 +129,6 @@ def config_to_catalogue_format(config: dict) -> dict:
         else:
             catalogue[to_catalogue_key(key)] = value
     return catalogue
-
-
-def validate_github(username):
-    response = requests.get(f"https://api.github.com/users/{username}")
-    if response.status_code == 200:
-        return True
-    else:
-        return False
 
 
 def validate_url(url):
@@ -531,8 +523,9 @@ def create_name(name):
 
 
 def validate_columns():
-    if not validate_github(st.session_state.get("gh_username", "").strip()):
-        st.error("Please enter a valid GitHub username.")
+    validation = validate_github_username(st.session_state.get("gh_username", "").strip())
+    if not validation.ok:
+        st.error(validation.error or "Please enter a valid GitHub username.")
         return False
     for key in required_columns:
         label = to_catalogue_key(key)

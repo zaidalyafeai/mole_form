@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from __future__ import annotations
-
 import json
 import os
 import subprocess
@@ -9,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
 
+import requests
 from dotenv import load_dotenv
 from git import GitCommandError, Repo
 from github import Auth, Github, GithubException
@@ -31,6 +30,74 @@ class PushResult:
     branch: str
     pull_request_url: str | None = None
     message: str | None = None
+
+
+@dataclass
+class GithubUserValidation:
+    ok: bool
+    error: str | None = None
+    status_code: int = 400
+
+
+def validate_github_username(username: str) -> GithubUserValidation:
+    username = username.strip()
+    if not username:
+        return GithubUserValidation(ok=False, error="GitHub username is required.")
+
+    token, _, _ = load_github_credentials()
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        response = requests.get(
+            f"https://api.github.com/users/{username}",
+            headers=headers,
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        return GithubUserValidation(
+            ok=False,
+            error=f"Could not reach GitHub to verify username: {exc}",
+            status_code=502,
+        )
+
+    if response.status_code == 200:
+        return GithubUserValidation(ok=True)
+
+    if response.status_code == 404:
+        return GithubUserValidation(
+            ok=False,
+            error="GitHub user not found. Please enter a valid GitHub username.",
+            status_code=404,
+        )
+
+    if response.status_code == 403:
+        remaining = response.headers.get("X-RateLimit-Remaining")
+        if remaining == "0":
+            reset = response.headers.get("X-RateLimit-Reset", "unknown")
+            return GithubUserValidation(
+                ok=False,
+                error=(
+                    "GitHub API rate limit exceeded while verifying username. "
+                    f"Try again after rate-limit reset (epoch {reset})."
+                ),
+                status_code=503,
+            )
+        return GithubUserValidation(
+            ok=False,
+            error="GitHub API denied the username lookup request.",
+            status_code=403,
+        )
+
+    return GithubUserValidation(
+        ok=False,
+        error=f"Could not verify GitHub username (HTTP {response.status_code}).",
+        status_code=502,
+    )
 
 
 def load_github_credentials() -> tuple[str, str, str]:

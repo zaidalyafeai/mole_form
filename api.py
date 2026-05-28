@@ -3,13 +3,12 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-import requests
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from github_push import GithubPushError, PushResult, push_metadata_to_github, unwrap_metadata
+from github_push import GithubPushError, PushResult, push_metadata_to_github, unwrap_metadata, validate_github_username
 
 load_dotenv()
 
@@ -38,11 +37,6 @@ class PushMetadataResponse(BaseModel):
     branch: str
     pull_request_url: Optional[str] = None
     message: Optional[str] = None
-
-
-def validate_github(username: str) -> bool:
-    response = requests.get(f"https://api.github.com/users/{username}", timeout=10)
-    return response.status_code == 200
 
 
 def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
@@ -74,8 +68,9 @@ def health() -> dict[str, str]:
 )
 def push_metadata(body: PushMetadataRequest) -> PushMetadataResponse:
     github_username = body.github_username.strip()
-    if not validate_github(github_username):
-        raise HTTPException(status_code=400, detail="Invalid GitHub username.")
+    validation = validate_github_username(github_username)
+    if not validation.ok:
+        raise HTTPException(status_code=validation.status_code, detail=validation.error)
 
     metadata = unwrap_metadata(body.metadata)
     if not (metadata.get("Name") or "").strip():
