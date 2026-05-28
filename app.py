@@ -296,7 +296,7 @@ def update_config(config, update_url=True):
             None,
         )
         if paper_col and paper_col in config:
-            st.session_state.paper_url = config[paper_col]
+            st.session_state.paper_url = normalize_paper_url(config[paper_col])
 
     st.session_state.show_form = True
     merged = create_default_json()
@@ -534,6 +534,8 @@ def reset_config():
     st.session_state.paper_pdf = None
     st.session_state._last_ai_paper_url = ""
     st.session_state._loaded_json_url = ""
+    st.session_state._paper_pdf_cache_key = ""
+    st.session_state._paper_pdf_bytes = None
 
 
 def load_metadata_from_url(url: str) -> dict | None:
@@ -623,7 +625,7 @@ def apply_url_query_params() -> None:
     annotation_type = query_param("annotation_type").lower()
 
     if pdf_link:
-        st.session_state.paper_url = pdf_link
+        st.session_state.paper_url = normalize_paper_url(pdf_link)
 
     if not annotation_type and not pdf_link and not json_url:
         return
@@ -806,11 +808,69 @@ def fix_arxiv_link(link):
     return f"https://arxiv.org/pdf/{_id}.pdf"
 
 
+def normalize_paper_url(url: str) -> str:
+    url = url.strip()
+    if url.startswith("http://"):
+        url = "https://" + url[len("http://") :]
+    if "arxiv.org" in url:
+        url = fix_arxiv_link(url)
+    return url
+
+
 def get_pdf(paper_url):
-    if "arxiv.org" in paper_url:
-        paper_url = fix_arxiv_link(paper_url)
-    response = requests.get(paper_url)
+    paper_url = normalize_paper_url(paper_url)
+    response = requests.get(paper_url, timeout=60)
+    response.raise_for_status()
     return response.content
+
+
+def paper_pdf_cache_key() -> str:
+    if st.session_state.get("paper_pdf"):
+        return f"upload:{st.session_state.paper_pdf.name}"
+    if st.session_state.get("paper_url"):
+        return f"url:{normalize_paper_url(st.session_state.paper_url)}"
+    return ""
+
+
+def get_paper_pdf_bytes() -> bytes | None:
+    if st.session_state.get("paper_pdf"):
+        return st.session_state.paper_pdf.getvalue()
+
+    paper_url = st.session_state.get("paper_url", "").strip()
+    if not paper_url:
+        return None
+
+    paper_url = normalize_paper_url(paper_url)
+    cache_key = paper_pdf_cache_key()
+    if (
+        st.session_state.get("_paper_pdf_cache_key") == cache_key
+        and st.session_state.get("_paper_pdf_bytes")
+    ):
+        return st.session_state["_paper_pdf_bytes"]
+
+    try:
+        pdf_bytes = get_pdf(paper_url)
+    except requests.RequestException as exc:
+        st.error(f"Failed to load PDF: {exc}")
+        return None
+
+    st.session_state._paper_pdf_cache_key = cache_key
+    st.session_state._paper_pdf_bytes = pdf_bytes
+    return pdf_bytes
+
+
+def render_paper_preview(height=1200):
+    pdf_bytes = get_paper_pdf_bytes()
+    if pdf_bytes:
+        pdf_viewer(input=pdf_bytes, height=height, width="100%")
+        return
+
+    paper_url = st.session_state.get("paper_url", "").strip()
+    if paper_url:
+        st.warning("Could not load the PDF preview.")
+        st.link_button("Open PDF in new tab", normalize_paper_url(paper_url))
+    else:
+        st.warning("No PDF found")
 
 
 def download_button(config):
@@ -951,6 +1011,8 @@ def main():
             # Prepare the file for sending
             pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
             st.session_state.paper_pdf = upload_pdf
+            st.session_state._paper_pdf_cache_key = ""
+            st.session_state._paper_pdf_bytes = None
             metadata = get_metadata(pdf=pdf)
             update_config(metadata, update_url=False)
         elif paper_url:
@@ -970,16 +1032,7 @@ def main():
     if st.session_state.show_form:
         with col2:
             with st.container(height=height):
-                if st.session_state.paper_pdf:
-                    file_path = f"static/temp.pdf"
-                    with open(file_path, "wb") as f:
-                        f.write(st.session_state.paper_pdf.getbuffer())
-                    displayPDF(link=f"app/{file_path}")
-                elif st.session_state.paper_url:
-                    # pdf_viewer(pdf, height=height, render_text=True)
-                    displayPDF(link=st.session_state.paper_url, height=height)
-                else:
-                    st.warning("No PDF found")
+                render_paper_preview(height=height)
 
         with col1:
             with st.container(height=height):
