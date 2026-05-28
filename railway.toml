@@ -5,5 +5,5 @@ builder = "Nixpacks"
 packages = ["git"]
 
 [deploy]
-startCommand = "uv run streamlit run app.py --server.address 0.0.0.0 --server.port $PORT --server.fileWatcherType none --browser.gatherUsageStats false --client.showErrorDetails false --client.toolbarMode minimal"
+startCommand = "sh start.sh"
 restartPolicy = "on_failure"

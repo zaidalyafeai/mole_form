@@ -6,8 +6,13 @@ readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "dotenv>=0.9.9",
+    "fastapi>=0.115.0",
+    "gitpython>=3.1.45",
+    "httpx>=0.28.0",
     "pygithub>=2.8.1",
     "streamlit>=1.50.0",
     "streamlit-pdf-viewer>=0.0.26",
     "streamlit-tags>=1.2.8",
+    "uvicorn>=0.34.0",
+    "websockets>=13.0",
 ]

@@ -5,12 +5,10 @@ import requests
 import re
 import json
 import os
-import subprocess
 from pathlib import Path
-from github import Auth, Github, GithubException
-from git import Repo, GitCommandError
 from datetime import date
 from constants import *
+from github_push import GithubPushError, load_github_credentials, push_metadata_to_github
 from streamlit_tags import st_tags
 from dotenv import load_dotenv
 from streamlit_pdf_viewer import pdf_viewer
@@ -29,15 +27,6 @@ st.set_page_config(
 "# 📮 :rainbow[Masader Form]"
 
 _APP_DIR = Path(__file__).resolve().parent
-
-
-def load_github_credentials():
-    load_dotenv(_APP_DIR / ".env", override=True)
-    return (
-        (os.getenv("GITHUB_TOKEN") or "").strip(),
-        (os.getenv("GIT_USER_NAME") or "").strip(),
-        (os.getenv("GIT_USER_EMAIL") or "").strip(),
-    )
 
 
 load_dotenv(_APP_DIR / ".env", override=True)
@@ -361,130 +350,26 @@ def github_credentials_ok() -> bool:
     return True
 
 
-def remote_branch_exists(repo, branch_name: str) -> bool:
-    try:
-        repo.get_git_ref(f"heads/{branch_name}")
-        return True
-    except GithubException:
-        return False
-
-
-def find_open_pr_for_branch(gh_repo, branch_name: str):
-    owner = gh_repo.owner.login
-    for pr in gh_repo.get_pulls(head=f"{owner}:{branch_name}", state="open"):
-        return pr
-    return None
-
-
-def push_branch(local_repo, branch_name: str, set_upstream: bool = False) -> None:
-    try:
-        if set_upstream:
-            local_repo.git.push("--set-upstream", "origin", branch_name)
-        else:
-            local_repo.git.push("origin", branch_name)
-    except GitCommandError:
-        local_repo.git.pull("--rebase", "origin", branch_name)
-        local_repo.git.push("origin", branch_name)
-
-
 def update_pr(new_dataset):
     if not github_credentials_ok():
         return
 
-    github_token, git_user_name, git_user_email = load_github_credentials()
-
-    # create a valid name for the dataset
-    data_name = new_dataset["Name"].lower().strip()
-    for symbol in VALID_PUNCT_NAMES:
-        data_name = data_name.replace(symbol, "_")
-
-    # Configuration
-    REPO_NAME = "ARBML/masader"  # Format: "owner/repo"
-    BRANCH_NAME = f"add-{data_name}"
-    PR_TITLE = f"Adding {new_dataset['Name']} to the catalogue"
-    PR_BODY = f"This is a pull request by @{st.session_state['gh_username']} to add a {new_dataset['Name']} to the catalogue."
-
     try:
-        g = Github(auth=Auth.Token(github_token))
-        repo = g.get_repo(REPO_NAME)
-    except GithubException as exc:
-        if exc.status == 401:
-            st.error(
-                "GitHub authentication failed (401). Check `GITHUB_TOKEN` in `.env` "
-                "(project root). If you recently updated `.env`, restart Streamlit. "
-                "If a shell variable named `GITHUB_TOKEN` is set, it can override `.env` — "
-                "unset it or update it. Create a new token at "
-                "https://github.com/settings/tokens with **repo** access to `ARBML/masader`."
-            )
-        else:
-            message = exc.data.get("message", str(exc)) if exc.data else str(exc)
-            st.error(f"GitHub API error ({exc.status}): {message}")
-        return
-
-    # setup name and email
-    os.system(f"git config --global user.email {git_user_email}")
-    os.system(f"git config --global user.name {git_user_name}")
-
-    # Clone repository
-    repo_url = f"https://{github_token}@github.com/{REPO_NAME}.git"
-    local_path = "./temp_repo"
-
-    branch_exists_on_remote = remote_branch_exists(repo, BRANCH_NAME)
-    open_pr = find_open_pr_for_branch(repo, BRANCH_NAME) if branch_exists_on_remote else None
-
-    if os.path.exists(local_path):
-        subprocess.run(["rm", "-rf", local_path])  # Clean up if exists
-    try:
-        Repo.clone_from(repo_url, local_path)
-    except Exception as exc:
-        st.error(
-            f"Could not clone `{REPO_NAME}`. Check that the token can read/write the repo "
-            f"and that you have network access. ({exc})"
+        result = push_metadata_to_github(
+            new_dataset,
+            st.session_state["gh_username"],
         )
+    except GithubPushError as exc:
+        st.error(exc.message)
         return
 
-    # Modify file
-    local_repo = Repo(local_path)
-
-    FILE_PATH = f"datasets/{data_name}.json"
-
-    if branch_exists_on_remote:
-        local_repo.git.fetch("origin", BRANCH_NAME)
-        local_repo.git.checkout("-B", BRANCH_NAME, f"origin/{BRANCH_NAME}")
-    else:
-        default_branch = repo.default_branch
-        local_repo.git.checkout(default_branch)
-        local_repo.git.pull("origin", default_branch)
-        local_repo.git.checkout("-b", BRANCH_NAME)
-
-    with open(f"{local_path}/{FILE_PATH}", "w") as f:
-        json.dump(new_dataset, f, indent=4)
-    local_repo.git.add(FILE_PATH)
-
-    if not local_repo.index.diff("HEAD"):
-        st.info("No changes made to the dataset")
+    if result.status == "unchanged":
+        st.info(result.message or "No changes made to the dataset")
         return
 
-    local_repo.git.commit(
-        "-m",
-        f"Updating {FILE_PATH}" if branch_exists_on_remote else f"Creating {FILE_PATH}.json",
-    )
-    try:
-        push_branch(local_repo, BRANCH_NAME, set_upstream=not branch_exists_on_remote)
-    except GitCommandError as exc:
-        st.error(f"Failed to push branch `{BRANCH_NAME}`: {exc}")
-        return
-
-    if open_pr:
-        st.success(f"Pull request updated: {open_pr.html_url}")
-    else:
-        pr = repo.create_pull(
-            title=PR_TITLE,
-            body=PR_BODY,
-            head=BRANCH_NAME,
-            base=repo.default_branch,
-        )
-        st.success(f"Pull request created: {pr.html_url}")
+    if result.pull_request_url:
+        action = "updated" if result.status == "updated" else "created"
+        st.success(f"Pull request {action}: {result.pull_request_url}")
 
     st.balloons()
 
