@@ -278,6 +278,10 @@ def query_param(name: str, default: str = "") -> str:
     return str(value).strip()
 
 
+def json_url_from_query() -> str:
+    return query_param("json_url") or query_param("json_link")
+
+
 def update_config(config, update_url=True):
     if not config:
         return
@@ -529,6 +533,32 @@ def reset_config():
     st.session_state.paper_url = ""
     st.session_state.paper_pdf = None
     st.session_state._last_ai_paper_url = ""
+    st.session_state._loaded_json_url = ""
+
+
+def load_metadata_from_url(url: str) -> dict | None:
+    url = url.strip()
+    if not url:
+        return None
+    try:
+        return load_json(link=url)
+    except requests.RequestException as exc:
+        st.error(f"Failed to fetch metadata JSON: {exc}")
+    except (json.JSONDecodeError, ValueError) as exc:
+        st.error(f"Invalid metadata JSON: {exc}")
+    return None
+
+
+def apply_metadata_from_url(url: str) -> bool:
+    if st.session_state.get("_loaded_json_url") == url:
+        return bool(st.session_state.get("show_form"))
+    metadata = load_metadata_from_url(url)
+    if not metadata:
+        st.session_state._loaded_json_url = ""
+        return False
+    update_config(metadata)
+    st.session_state._loaded_json_url = url
+    return True
 
 
 ANNOTATION_OPTIONS = [
@@ -544,6 +574,8 @@ URL_ANNOTATION_TYPES = {
 
 
 def annotation_index_from_url() -> int:
+    if json_url_from_query():
+        return ANNOTATION_OPTIONS.index("🚥 Load Annotation")
     annotation_type = query_param("annotation_type").lower()
     label = URL_ANNOTATION_TYPES.get(annotation_type)
     if label:
@@ -587,7 +619,7 @@ def run_ai_extraction(paper_url: str) -> None:
 
 def apply_url_query_params() -> None:
     pdf_link = query_param("pdf_link")
-    json_url = query_param("json_url")
+    json_url = json_url_from_query()
     annotation_type = query_param("annotation_type").lower()
 
     if pdf_link:
@@ -601,7 +633,9 @@ def apply_url_query_params() -> None:
         return
     st.session_state._query_params_key = cache_key
 
-    if annotation_type == "manual":
+    if json_url:
+        apply_metadata_from_url(json_url)
+    elif annotation_type == "manual":
         st.session_state.show_form = True
     elif annotation_type == "ai" and pdf_link:
         run_ai_extraction(pdf_link)
@@ -799,13 +833,17 @@ def download_button(config):
 
 def load_json(file=None, link=""):
     if file:
-        return json.load(file)
+        data = json.load(file)
     elif link:
-        response = requests.get(link)
-        response.raise_for_status()  # Raise an error for bad responses (e.g., 404)
-        return response.json()
+        response = requests.get(link, timeout=30)
+        response.raise_for_status()
+        data = response.json()
     else:
-        raise ("Error: can not load json")
+        raise ValueError("No file or link provided to load JSON")
+
+    if isinstance(data, dict) and "metadata" in data:
+        return data["metadata"]
+    return data
 
 
 def download_json(config):
@@ -852,7 +890,7 @@ def main():
         - 👾 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
         - 🚥 Load Annotation: Use this option to load a saved metadata annotation.
 
-    Deep-link with query parameters: `?annotation_type=manual|ai|load` and optionally `pdf_link=<url>` or `json_url=<url>`.
+    Deep-link with query parameters: `?annotation_type=manual|ai|load`, `pdf_link=<url>`, or `json_url=<direct-json-url>` (e.g. a raw GitHub link to a `.json` file).
     If you have face any issues post them on [GitHub](https://github.com/IVUL-KAUST/MOLE/issues).
     """,
     )
@@ -883,17 +921,18 @@ def main():
             help="You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets",
         )
         json_url = st.text_input(
-            "Path to json",
-            value=query_param("json_url"),
-            placeholder="For example: https://raw.githubusercontent.com/zaidalyafeai/mole_form/refs/heads/main/shami.json",
+            "Direct link to metadata JSON",
+            value=json_url_from_query(),
+            placeholder="https://raw.githubusercontent.com/ARBML/masader/main/datasets/shami.json",
         )
 
         if upload_file:
             metadata = load_json(file=upload_file)
-            update_config(metadata)
+            if metadata:
+                update_config(metadata)
+                st.session_state._loaded_json_url = upload_file.name
         elif json_url:
-            metadata = load_json(url=json_url)
-            update_config(metadata)
+            apply_metadata_from_url(json_url)
         elif not st.session_state.show_form:
             reset_config()
 
