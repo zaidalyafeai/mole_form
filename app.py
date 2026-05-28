@@ -8,7 +8,7 @@ import os
 import subprocess
 from pathlib import Path
 from github import Auth, Github, GithubException
-from git import Repo
+from git import Repo, GitCommandError
 from datetime import date
 from constants import *
 from streamlit_tags import st_tags
@@ -361,19 +361,37 @@ def github_credentials_ok() -> bool:
     return True
 
 
+def remote_branch_exists(repo, branch_name: str) -> bool:
+    try:
+        repo.get_git_ref(f"heads/{branch_name}")
+        return True
+    except GithubException:
+        return False
+
+
+def find_open_pr_for_branch(gh_repo, branch_name: str):
+    owner = gh_repo.owner.login
+    for pr in gh_repo.get_pulls(head=f"{owner}:{branch_name}", state="open"):
+        return pr
+    return None
+
+
+def push_branch(local_repo, branch_name: str, set_upstream: bool = False) -> None:
+    try:
+        if set_upstream:
+            local_repo.git.push("--set-upstream", "origin", branch_name)
+        else:
+            local_repo.git.push("origin", branch_name)
+    except GitCommandError:
+        local_repo.git.pull("--rebase", "origin", branch_name)
+        local_repo.git.push("origin", branch_name)
+
+
 def update_pr(new_dataset):
     if not github_credentials_ok():
         return
 
     github_token, git_user_name, git_user_email = load_github_credentials()
-
-    PRS = []
-    if os.path.exists("prs.json"):
-        with open("prs.json", "r") as f:
-            PRS = json.load(f)
-    else:
-        with open("prs.json", "w") as f:
-            json.dump(PRS, f, indent=4)
 
     # create a valid name for the dataset
     data_name = new_dataset["Name"].lower().strip()
@@ -411,22 +429,8 @@ def update_pr(new_dataset):
     repo_url = f"https://{github_token}@github.com/{REPO_NAME}.git"
     local_path = "./temp_repo"
 
-    pr_exists = False
-
-    # check the list of Pull Requests
-    for pr in PRS:
-        pr_obj = repo.get_pull(pr["number"])
-
-        # check the branch if it exists
-        if pr["branch"] == BRANCH_NAME:
-            print("PR already exists")
-            pr_exists = True
-        else:
-            #  delete unused branches
-            if pr["state"] == "open":
-                if pr_obj.state == "closed":
-                    # repo.get_git_ref(f"heads/{pr['branch']}").delete() # might be risky
-                    pr["state"] = "closed"
+    branch_exists_on_remote = remote_branch_exists(repo, BRANCH_NAME)
+    open_pr = find_open_pr_for_branch(repo, BRANCH_NAME) if branch_exists_on_remote else None
 
     if os.path.exists(local_path):
         subprocess.run(["rm", "-rf", local_path])  # Clean up if exists
@@ -444,32 +448,36 @@ def update_pr(new_dataset):
 
     FILE_PATH = f"datasets/{data_name}.json"
 
-    # if the branch exists
-    if pr_exists:
-        local_repo.git.checkout(BRANCH_NAME)
-        local_repo.git.pull("origin", BRANCH_NAME)
-        with open(f"{local_path}/{FILE_PATH}", "w") as f:
-            json.dump(new_dataset, f, indent=4)
-        local_repo.git.add(FILE_PATH)
-        # check if changes made
-        if local_repo.is_dirty():
-            local_repo.git.commit("-m", f"Updating {FILE_PATH}")
-            local_repo.git.push("origin", BRANCH_NAME)
-        else:
-            st.info("No changes made to the dataset")
-            return
+    if branch_exists_on_remote:
+        local_repo.git.fetch("origin", BRANCH_NAME)
+        local_repo.git.checkout("-B", BRANCH_NAME, f"origin/{BRANCH_NAME}")
     else:
-        with open(f"{local_path}/{FILE_PATH}", "w") as f:
-            json.dump(new_dataset, f, indent=4)
+        default_branch = repo.default_branch
+        local_repo.git.checkout(default_branch)
+        local_repo.git.pull("origin", default_branch)
         local_repo.git.checkout("-b", BRANCH_NAME)
-        local_repo.git.pull("origin", "main")
-        # Commit and push changes
-        local_repo.git.add(FILE_PATH)
-        local_repo.git.commit("-m", f"Creating {FILE_PATH}.json")
-        local_repo.git.push("--set-upstream", "origin", BRANCH_NAME)
 
-    # if the PR doesn't exist
-    if not pr_exists:
+    with open(f"{local_path}/{FILE_PATH}", "w") as f:
+        json.dump(new_dataset, f, indent=4)
+    local_repo.git.add(FILE_PATH)
+
+    if not local_repo.index.diff("HEAD"):
+        st.info("No changes made to the dataset")
+        return
+
+    local_repo.git.commit(
+        "-m",
+        f"Updating {FILE_PATH}" if branch_exists_on_remote else f"Creating {FILE_PATH}.json",
+    )
+    try:
+        push_branch(local_repo, BRANCH_NAME, set_upstream=not branch_exists_on_remote)
+    except GitCommandError as exc:
+        st.error(f"Failed to push branch `{BRANCH_NAME}`: {exc}")
+        return
+
+    if open_pr:
+        st.success(f"Pull request updated: {open_pr.html_url}")
+    else:
         pr = repo.create_pull(
             title=PR_TITLE,
             body=PR_BODY,
@@ -477,21 +485,6 @@ def update_pr(new_dataset):
             base=repo.default_branch,
         )
         st.success(f"Pull request created: {pr.html_url}")
-        # add the pr
-        PRS.append(
-            {
-                "name": new_dataset["Name"],
-                "url": pr.html_url,
-                "branch": BRANCH_NAME,
-                "state": "open",
-                "number": pr.number,
-            }
-        )
-    else:
-        st.success(f"Pull request updated")
-
-    with open("prs.json", "w") as f:
-        json.dump(PRS, f, indent=4)
 
     st.balloons()
 
