@@ -287,7 +287,7 @@ def push_metadata_to_github(
     commit_message = (
         f"Updating {file_path}"
         if branch_exists_on_remote
-        else f"Creating {file_path}.json"
+        else f"Creating {file_path}"
     )
     local_repo.git.commit("-m", commit_message)
 
