@@ -16,6 +16,7 @@ import streamlit.components.v1 as components
 import base64
 
 MOLE_URL = "https://mextract-production.up.railway.app"
+MOLE_REQUEST_TIMEOUT = 300
 
 
 st.set_page_config(
@@ -31,6 +32,7 @@ _APP_DIR = Path(__file__).resolve().parent
 
 load_dotenv(_APP_DIR / ".env", override=True)
 GITHUB_TOKEN, GIT_USER_NAME, GIT_USER_EMAIL = load_github_credentials()
+DEFAULT_MODEL_NAME = os.environ.get("MOLE_MODEL_NAME", "qwen/qwen3.6-35b-a3b")
 
 import requests
 
@@ -417,13 +419,17 @@ def update_pr(new_dataset):
 
 def get_metadata(link="", pdf=None):
     url = f"{MOLE_URL}/run"
-    # print(pdf)
+    form_data = {"schema_name": mode, "model_name": DEFAULT_MODEL_NAME}
     if link != "":
-        response = requests.post(url, data={"link": link, "schema_name": mode})
+        response = requests.post(
+            url, data={"link": link, **form_data}, timeout=MOLE_REQUEST_TIMEOUT
+        )
     elif pdf:
-        response = requests.post(url, files={"file": pdf}, data={"schema_name": mode})
+        response = requests.post(
+            url, files={"file": pdf}, data=form_data, timeout=MOLE_REQUEST_TIMEOUT
+        )
     else:
-        response = requests.get(url)
+        response = requests.get(url, timeout=MOLE_REQUEST_TIMEOUT)
 
     # Check if the request was successful
     if response.status_code == 200:
