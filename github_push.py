@@ -167,7 +167,10 @@ def build_pr_body(
         f"{dataset_name} to the catalogue.\n\n"
     )
     if edit_url:
-        body += f"[Edit this submission in the Masader Form]({edit_url})\n\n"
+        body += (
+            f'<a href="{edit_url}" target="_blank" rel="noopener noreferrer">'
+            "Edit this submission in the Masader Form</a>\n\n"
+        )
     body += f"Metadata JSON: [`{file_path}`]({raw_url})"
     return body
 
