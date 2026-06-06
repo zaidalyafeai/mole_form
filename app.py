@@ -791,7 +791,7 @@ def get_paper_pdf_bytes() -> bytes | None:
 def render_paper_preview(height=1200):
     pdf_bytes = get_paper_pdf_bytes()
     if pdf_bytes:
-        pdf_viewer(input=pdf_bytes, height=height, width="100%")
+        pdf_viewer(input=pdf_bytes, height=height, width="100%", render_text=True)
         return
 
     paper_url = st.session_state.get("paper_url", "").strip()

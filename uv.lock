@@ -629,7 +629,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "pygithub", specifier = ">=2.8.1" },
     { name = "streamlit", specifier = ">=1.50.0" },
-    { name = "streamlit-pdf-viewer", specifier = ">=0.0.26" },
+    { name = "streamlit-pdf-viewer", specifier = ">=0.0.20" },
     { name = "streamlit-tags", specifier = ">=1.2.8" },
     { name = "uvicorn", specifier = ">=0.34.0" },
     { name = "websockets", specifier = ">=13.0" },
