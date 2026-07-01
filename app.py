@@ -17,6 +17,7 @@ import base64
 
 MOLE_URL = "https://mextract-production.up.railway.app"
 MOLE_REQUEST_TIMEOUT = 300
+VENUES_URL = "https://raw.githubusercontent.com/ARBML/masader/main/venues.json"
 
 
 st.set_page_config(
@@ -314,7 +315,127 @@ def json_url_from_query() -> str:
     return query_param("json_url") or query_param("json_link")
 
 
-def update_config(config, update_url=True):
+def column_by_label(label: str) -> str | None:
+    target = label.lower().replace("_", " ")
+    for column in columns:
+        if column.replace("_", " ").lower() == target:
+            return column
+    return None
+
+
+def paper_link_column() -> str | None:
+    return column_by_label("paper link")
+
+
+def venue_columns() -> tuple[str | None, str | None, str | None]:
+    return (
+        column_by_label("venue title"),
+        column_by_label("venue name"),
+        column_by_label("venue type"),
+    )
+
+
+def apply_paper_link(url: str) -> None:
+    url = normalize_paper_url(url)
+    if not url:
+        return
+    if normalize_paper_url(st.session_state.get("paper_url", "")) != url:
+        clear_paper_pdf_cache()
+    st.session_state.paper_url = url
+    paper_col = paper_link_column()
+    if paper_col:
+        st.session_state[paper_col] = url
+
+
+def sync_paper_link_from_url() -> None:
+    apply_paper_link(st.session_state.get("paper_url", ""))
+
+
+@st.cache_data(ttl=3600)
+def load_venues() -> dict:
+    response = requests.get(VENUES_URL, timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
+def normalize_venue(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    value = value.strip().lower()
+    if not value:
+        return ""
+    value = value.replace("&", " and ")
+    value = re.sub(r"[^\w\s]", " ", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    value = re.sub(r"^the\s+", "", value)
+    return value
+
+
+def build_venue_lookup(venues: dict) -> dict[str, str]:
+    lookup: dict[str, str] = {}
+    for title, entry in venues.items():
+        if not title:
+            continue
+        surfaces = [title, entry.get("name", ""), *entry.get("aliases", [])]
+        for surface in surfaces:
+            key = normalize_venue(surface)
+            if key:
+                lookup.setdefault(key, title)
+    return lookup
+
+
+def venue_title_options(venues: dict) -> list[str]:
+    return sorted(title for title in venues if title)
+
+
+def resolve_venue_fields(config: dict, venues: dict) -> dict:
+    title_col, name_col, type_col = venue_columns()
+    if not title_col:
+        return config
+
+    lookup = build_venue_lookup(venues)
+    matched_title = None
+    for column in (title_col, name_col):
+        raw = config.get(column)
+        if not raw:
+            continue
+        if raw in venues:
+            matched_title = raw
+            break
+        key = normalize_venue(str(raw))
+        if key in lookup:
+            matched_title = lookup[key]
+            break
+
+    if not matched_title or matched_title not in venues:
+        return config
+
+    entry = venues[matched_title]
+    config[title_col] = matched_title
+    if name_col:
+        config[name_col] = entry.get("name", "")
+    if type_col:
+        config[type_col] = entry.get("type", config.get(type_col, ""))
+    return config
+
+
+def sync_venue_from_title(venues: dict) -> None:
+    title_col, name_col, type_col = venue_columns()
+    if not title_col:
+        return
+    selected = st.session_state.get(title_col, "")
+    if selected not in venues:
+        return
+    entry = venues[selected]
+    if name_col:
+        st.session_state[name_col] = entry.get("name", "")
+    if type_col:
+        st.session_state[type_col] = coerce_value_for_column(
+            type_col, entry.get("type", "")
+        )
+
+
+def update_config(config, update_url=True, paper_link=None):
     if not config:
         return
     if "metadata" in config:
@@ -322,22 +443,34 @@ def update_config(config, update_url=True):
 
     config = normalize_config_to_schema(config)
 
-    if update_url:
-        paper_col = next(
-            (c for c in columns if c.replace("_", " ").lower() == "paper link"),
-            None,
-        )
-        if paper_col and paper_col in config:
-            st.session_state.paper_url = normalize_paper_url(config[paper_col])
+    venues = None
+    try:
+        venues = load_venues()
+        config = resolve_venue_fields(config, venues)
+    except requests.RequestException as exc:
+        st.warning(f"Could not load venues.json: {exc}")
 
     st.session_state.show_form = True
     merged = create_default_json()
     merged.update(config)
+    if paper_link:
+        paper_col = paper_link_column()
+        if paper_col:
+            merged[paper_col] = normalize_paper_url(paper_link)
+    if venues is not None:
+        merged = resolve_venue_fields(merged, venues)
     if "annotations_from_paper" not in merged:
         merged["annotations_from_paper"] = {}
     for column in columns:
         merged["annotations_from_paper"].setdefault(column, 1)
     update_session_config(merged)
+
+    if paper_link:
+        apply_paper_link(paper_link)
+    elif update_url:
+        paper_col = paper_link_column()
+        if paper_col and paper_col in merged and merged[paper_col]:
+            st.session_state.paper_url = normalize_paper_url(merged[paper_col])
 
 
 def render_list_dict(c, type):
@@ -451,6 +584,14 @@ def create_default_json():
     return default_json
 
 
+def clear_paper_pdf_cache() -> None:
+    st.session_state._paper_pdf_cache_key = ""
+    st.session_state._paper_pdf_bytes = None
+    for key in list(st.session_state):
+        if str(key).startswith("_paper_pdf_failed:"):
+            del st.session_state[key]
+
+
 def reset_config():
     default_json = create_default_json()
     update_config(default_json)
@@ -459,8 +600,7 @@ def reset_config():
     st.session_state.paper_pdf = None
     st.session_state._last_ai_paper_url = ""
     st.session_state._loaded_json_url = ""
-    st.session_state._paper_pdf_cache_key = ""
-    st.session_state._paper_pdf_bytes = None
+    clear_paper_pdf_cache()
 
 
 def load_metadata_from_url(url: str) -> dict | None:
@@ -514,34 +654,41 @@ def run_ai_extraction(paper_url: str) -> None:
     if st.session_state.get("_last_ai_paper_url") == paper_url:
         return
     st.session_state._last_ai_paper_url = paper_url
+    normalized_link = normalize_paper_url(paper_url)
     try:
         if "arxiv" in paper_url:
             metadata = get_metadata(link=paper_url)
             if metadata:
-                update_config(metadata, update_url=False)
+                update_config(metadata, update_url=False, paper_link=normalized_link)
             else:
                 st.session_state._last_ai_paper_url = ""
             return
-        response = requests.get(paper_url, timeout=30)
+        response = requests.get(
+            paper_url, timeout=30, headers=PDF_REQUEST_HEADERS
+        )
         response.raise_for_status()
-        if response.headers.get("Content-Type") == "application/pdf":
+        content_type = response.headers.get("Content-Type", "")
+        if "pdf" in content_type.lower() or paper_url.lower().endswith(".pdf"):
             pdf = (
                 paper_url.split("/")[-1],
                 response.content,
-                response.headers.get("Content-Type", "application/pdf"),
+                content_type or "application/pdf",
             )
             metadata = get_metadata(pdf=pdf)
             if metadata:
-                update_config(metadata)
+                update_config(metadata, update_url=False, paper_link=normalized_link)
             else:
                 st.session_state._last_ai_paper_url = ""
         else:
             st.error(
                 f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
             )
-    except requests.RequestException as exc:
-        st.error(f"Failed to fetch PDF: {exc}")
-        st.session_state._last_ai_paper_url = ""
+    except requests.RequestException:
+        st.warning(
+            "Could not download the PDF for AI extraction (the host may be unreachable). "
+            "Paper Link has been set — use Manual Annotation, upload the PDF, or open it in your browser."
+        )
+        update_config(create_default_json(), update_url=False, paper_link=normalized_link)
 
 
 def apply_url_query_params() -> None:
@@ -550,7 +697,7 @@ def apply_url_query_params() -> None:
     annotation_type = query_param("annotation_type").lower()
 
     if pdf_link:
-        st.session_state.paper_url = normalize_paper_url(pdf_link)
+        apply_paper_link(pdf_link)
 
     if not annotation_type and not pdf_link and not json_url:
         return
@@ -566,6 +713,8 @@ def apply_url_query_params() -> None:
         st.session_state.show_form = True
     elif annotation_type == "ai" and pdf_link:
         run_ai_extraction(pdf_link)
+    elif pdf_link:
+        st.session_state.show_form = True
 
 
 def create_name(name):
@@ -698,7 +847,7 @@ def create_element(
             )
 
     elif "list[dict[" in type:
-        with st.expander(f"Add {key}"):
+        with st.expander(f""):
             st.caption(
                 "Use this field to add dialect subsets of the dataset. For example if the dataset has 1,000 sentences in the Yemeni dialect.\
                         For example take a look at the [shami subsets](https://github.com/ARBML/masader/tree/main/datasets/shami.json)."
@@ -739,16 +888,25 @@ def fix_arxiv_link(link):
 
 def normalize_paper_url(url: str) -> str:
     url = url.strip()
-    if url.startswith("http://"):
-        url = "https://" + url[len("http://") :]
+    if url and not url.startswith(("http://", "https://")):
+        url = f"https://{url.lstrip('/')}"
     if "arxiv.org" in url:
         url = fix_arxiv_link(url)
     return url
 
 
+PDF_REQUEST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; MasaderForm/1.0; +https://github.com/ARBML/masader)",
+}
+
+
 def get_pdf(paper_url):
     paper_url = normalize_paper_url(paper_url)
-    response = requests.get(paper_url, timeout=60)
+    response = requests.get(
+        paper_url,
+        timeout=60,
+        headers=PDF_REQUEST_HEADERS,
+    )
     response.raise_for_status()
     return response.content
 
@@ -777,12 +935,17 @@ def get_paper_pdf_bytes() -> bytes | None:
     ):
         return st.session_state["_paper_pdf_bytes"]
 
-    try:
-        pdf_bytes = get_pdf(paper_url)
-    except requests.RequestException as exc:
-        st.error(f"Failed to load PDF: {exc}")
+    failed_key = f"_paper_pdf_failed:{cache_key}"
+    if st.session_state.get(failed_key):
         return None
 
+    try:
+        pdf_bytes = get_pdf(paper_url)
+    except requests.RequestException:
+        st.session_state[failed_key] = True
+        return None
+
+    st.session_state.pop(failed_key, None)
     st.session_state._paper_pdf_cache_key = cache_key
     st.session_state._paper_pdf_bytes = pdf_bytes
     return pdf_bytes
@@ -796,7 +959,10 @@ def render_paper_preview(height=1200):
 
     paper_url = st.session_state.get("paper_url", "").strip()
     if paper_url:
-        st.warning("Could not load the PDF preview.")
+        st.warning(
+            "Could not load the PDF preview. The host may be unreachable from this server. "
+            "Paper Link is still set — open the PDF in your browser or upload it manually."
+        )
         st.link_button("Open PDF in new tab", normalize_paper_url(paper_url))
     else:
         st.warning("No PDF found")
@@ -953,12 +1119,23 @@ def main():
         st.session_state.show_form = True
 
     if options != "🚥 Load Annotation":
-        st.text_input("Paper Direct Link", key="paper_url")
+        st.text_input(
+            "Paper Direct Link",
+            key="paper_url",
+            on_change=sync_paper_link_from_url,
+        )
 
     col1, col2 = st.columns(2)
     height = 1200
 
     if st.session_state.show_form:
+        try:
+            venues_data = load_venues()
+        except requests.RequestException as exc:
+            venues_data = {}
+            st.warning(f"Could not load venues.json: {exc}")
+        venue_title_col, venue_name_col, venue_type_col = venue_columns()
+
         with col2:
             with st.container(height=height):
                 render_paper_preview(height=height)
@@ -971,6 +1148,31 @@ def main():
                     )
                     for key in columns:
                         if key == "annotations_from_paper":
+                            continue
+                        if key == venue_title_col and venues_data:
+                            label = to_catalogue_key(key)
+                            if key in required_columns:
+                                st.write(f"{label}*")
+                            else:
+                                st.write(label)
+                            if use_annotations_paper:
+                                st.toggle(
+                                    "Paper annotated",
+                                    key=f"annot_{key}",
+                                    value=True,
+                                )
+                            titles = venue_title_options(venues_data)
+                            current = st.session_state.get(key, default_for_column(key))
+                            if current and current not in titles:
+                                titles = [current, *titles]
+                            st.selectbox(
+                                key,
+                                options=titles,
+                                key=key,
+                                label_visibility="collapsed",
+                                help="Select a venue title from masader/venues.json. Name and type are filled automatically.",
+                            )
+                            sync_venue_from_title(venues_data)
                             continue
                         if "options" in schema[key]:
                             options = schema[key]["options"]
