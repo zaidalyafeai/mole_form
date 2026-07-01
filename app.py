@@ -512,16 +512,45 @@ def render_list_dict(c, type):
             break
 
 
+def notify(kind: str, message: str, url: str | None = None) -> None:
+    """Record a submit-related result and surface it immediately via a toast.
+
+    The stored result is rendered at the top of the page (outside the scrollable
+    form container) by ``render_submit_status`` so it is always visible.
+    """
+    st.session_state.submit_result = {"kind": kind, "message": message, "url": url}
+    icons = {"success": "✅", "error": "❌", "info": "ℹ️"}
+    st.toast(message, icon=icons.get(kind))
+
+
+def render_submit_status() -> None:
+    result = st.session_state.get("submit_result")
+    if not result:
+        return
+    kind = result.get("kind", "info")
+    message = result.get("message", "")
+    url = result.get("url")
+    if url:
+        message = f"{message}: {url}" if message else url
+    if kind == "success":
+        st.success(message)
+    elif kind == "error":
+        st.error(message)
+    else:
+        st.info(message)
+
+
 def github_credentials_ok() -> bool:
     token, user_name, user_email = load_github_credentials()
     if not token:
-        st.error(
+        notify(
+            "error",
             "GITHUB_TOKEN is not set. Add it to `.env` in the project root "
-            "(see https://github.com/settings/tokens), then restart Streamlit."
+            "(see https://github.com/settings/tokens), then restart Streamlit.",
         )
         return False
     if not user_name or not user_email:
-        st.error("GIT_USER_NAME and GIT_USER_EMAIL must be set in `.env`.")
+        notify("error", "GIT_USER_NAME and GIT_USER_EMAIL must be set in `.env`.")
         return False
     return True
 
@@ -536,16 +565,16 @@ def update_pr(new_dataset):
             st.session_state["gh_username"],
         )
     except GithubPushError as exc:
-        st.error(exc.message)
+        notify("error", exc.message)
         return
 
     if result.status == "unchanged":
-        st.info(result.message or "No changes made to the dataset")
+        notify("info", result.message or "No changes made to the dataset")
         return
 
     if result.pull_request_url:
         action = "updated" if result.status == "updated" else "created"
-        st.success(f"Pull request {action}: {result.pull_request_url}")
+        notify("success", f"Pull request {action}", url=result.pull_request_url)
 
     st.balloons()
 
@@ -600,6 +629,9 @@ def reset_config():
     st.session_state.paper_pdf = None
     st.session_state._last_ai_paper_url = ""
     st.session_state._loaded_json_url = ""
+    st.session_state.submit_result = None
+    st.session_state.submitting = False
+    st.session_state._pending_config = None
     clear_paper_pdf_cache()
 
 
@@ -729,7 +761,7 @@ def create_name(name):
 def validate_columns():
     validation = validate_github_username(st.session_state.get("gh_username", "").strip())
     if not validation.ok:
-        st.error(validation.error or "Please enter a valid GitHub username.")
+        notify("error", validation.error or "Please enter a valid GitHub username.")
         return False
     for key in required_columns:
         label = to_catalogue_key(key)
@@ -737,19 +769,19 @@ def validate_columns():
         type = column_types[key]
         if type in ["list[str]", "list[dict]"]:
             if len(value) == 0:
-                st.error(f"Please enter a valid {label}.")
+                notify("error", f"Please enter a valid {label}.")
                 return False
         elif type == "str":
             if value == "":
-                st.error(f"Please enter a valid {label}.")
+                notify("error", f"Please enter a valid {label}.")
                 return False
         elif type == "url":
             if not validate_url(value):
-                st.error(f"Please enter a valid {label}.")
+                notify("error", f"Please enter a valid {label}.")
                 return False
         elif type == "int":
             if value == 0:
-                st.error(f"Please enter a valid {label}.")
+                notify("error", f"Please enter a valid {label}.")
                 return False
     return True
 
@@ -1020,20 +1052,26 @@ def displayPDF(link="", pdf=None, height=1200):
     st.markdown(pdf_display, unsafe_allow_html=True)
 
 
-@st.fragment
 def submit_form():
+    submitting = st.session_state.get("submitting", False)
     col1, col2 = st.columns(2)
     with col1:
-        submit = st.form_submit_button("Submit")
+        submit = st.form_submit_button(
+            "Submitting..." if submitting else "Submit", disabled=submitting
+        )
     with col2:
-        download = st.form_submit_button("Download")
+        download = st.form_submit_button("Download", disabled=submitting)
 
-    if submit or download:
-        config = config_to_catalogue_format(create_json())
-        if download:
-            download_json(config)
-        elif submit and validate_columns():
-            update_pr(config)
+    if download:
+        download_json(config_to_catalogue_format(create_json()))
+        return
+
+    # Defer the slow PR work to the page-level handler in main() so the spinner
+    # and result render at the bottom of the page, outside the scrollable form.
+    if submit and validate_columns():
+        st.session_state._pending_config = config_to_catalogue_format(create_json())
+        st.session_state.submitting = True
+        st.rerun()
 
 
 def main():
@@ -1186,6 +1224,18 @@ def main():
                             type=schema[key]["answer_type"],
                         )
                     submit_form()
+
+    # Status and PR progress live here, at the bottom of the page and outside the
+    # scrollable form container, so the user always sees the outcome of a submit
+    # without scrolling back up inside the form.
+    if st.session_state.get("submitting"):
+        with st.spinner("Creating the pull request. This can take up to a minute..."):
+            update_pr(st.session_state.get("_pending_config"))
+        st.session_state.submitting = False
+        st.session_state._pending_config = None
+        st.rerun()
+
+    render_submit_status()
 
 
 if __name__ == "__main__":
