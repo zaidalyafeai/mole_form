@@ -2,15 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlencode
 
 import requests
 from dotenv import load_dotenv
-from git import GitCommandError, Repo
-from github import Auth, Github, GithubException
+from github import Auth, Github, GithubException, InputGitAuthor
 
 from constants import MASADER_GH_REPO, VALID_PUNCT_NAMES
 
@@ -190,24 +188,21 @@ def find_open_pr_for_branch(gh_repo, branch_name: str):
     return None
 
 
-def push_branch(local_repo, branch_name: str, set_upstream: bool = False) -> None:
-    try:
-        if set_upstream:
-            local_repo.git.push("--set-upstream", "origin", branch_name)
-        else:
-            local_repo.git.push("origin", branch_name)
-    except GitCommandError:
-        local_repo.git.pull("--rebase", "origin", branch_name)
-        local_repo.git.push("origin", branch_name)
-
-
 def push_metadata_to_github(
     metadata: dict,
     github_username: str,
     *,
     repo_name: str = MASADER_GH_REPO,
-    local_path: str = "./temp_repo",
 ) -> PushResult:
+    """Create/update the dataset JSON and open (or refresh) a PR entirely via the
+    GitHub REST API.
+
+    This intentionally avoids cloning the (large) ``ARBML/masader`` repository:
+    cloning inside a resource-constrained container is slow and blocks the
+    request long enough to trip the platform's proxy timeout ("upstream error")
+    and trigger a restart. The Git Data / Contents API touches only the single
+    file we care about, so a submit stays fast and cheap.
+    """
     metadata = unwrap_metadata(metadata)
     dataset_name = (metadata.get("Name") or "").strip()
     if not dataset_name:
@@ -233,6 +228,7 @@ def push_metadata_to_github(
     try:
         g = Github(auth=Auth.Token(github_token))
         repo = g.get_repo(repo_name)
+        default_branch = repo.default_branch
     except GithubException as exc:
         if exc.status == 401:
             raise GithubPushError(
@@ -245,60 +241,77 @@ def push_metadata_to_github(
             status_code=502,
         ) from exc
 
-    os.system(f"git config --global user.email {git_user_email}")
-    os.system(f"git config --global user.name {git_user_name}")
-
-    repo_url = f"https://{github_token}@github.com/{repo_name}.git"
     branch_exists_on_remote = remote_branch_exists(repo, branch_name)
-    open_pr = find_open_pr_for_branch(repo, branch_name) if branch_exists_on_remote else None
-
-    if os.path.exists(local_path):
-        subprocess.run(["rm", "-rf", local_path], check=False)
-
-    try:
-        Repo.clone_from(repo_url, local_path)
-    except Exception as exc:
-        raise GithubPushError(
-            f"Could not clone `{repo_name}`. Check token permissions and network access. ({exc})",
-            status_code=502,
-        ) from exc
-
-    local_repo = Repo(local_path)
-
-    if branch_exists_on_remote:
-        local_repo.git.fetch("origin", branch_name)
-        local_repo.git.checkout("-B", branch_name, f"origin/{branch_name}")
-    else:
-        default_branch = repo.default_branch
-        local_repo.git.checkout(default_branch)
-        local_repo.git.pull("origin", default_branch)
-        local_repo.git.checkout("-b", branch_name)
-
-    with open(f"{local_path}/{file_path}", "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=4)
-
-    local_repo.git.add(file_path)
-
-    if not local_repo.index.diff("HEAD"):
-        return PushResult(
-            status="unchanged",
-            branch=branch_name,
-            pull_request_url=open_pr.html_url if open_pr else None,
-            message="No changes made to the dataset.",
-        )
-
-    commit_message = (
-        f"Updating {file_path}"
-        if branch_exists_on_remote
-        else f"Creating {file_path}"
+    open_pr = (
+        find_open_pr_for_branch(repo, branch_name) if branch_exists_on_remote else None
     )
-    local_repo.git.commit("-m", commit_message)
+
+    # Create the working branch off the default branch head when it doesn't exist.
+    if not branch_exists_on_remote:
+        try:
+            base_sha = repo.get_branch(default_branch).commit.sha
+            repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=base_sha)
+        except GithubException as exc:
+            message = exc.data.get("message", str(exc)) if exc.data else str(exc)
+            raise GithubPushError(
+                f"Could not create branch `{branch_name}`: {message}",
+                status_code=502,
+            ) from exc
+
+    new_content = json.dumps(metadata, indent=4)
+
+    # Look up the existing file on the branch (if any) to decide create vs update
+    # and to short-circuit when nothing changed.
+    existing_file = None
+    try:
+        existing_file = repo.get_contents(file_path, ref=branch_name)
+    except GithubException as exc:
+        if exc.status != 404:
+            message = exc.data.get("message", str(exc)) if exc.data else str(exc)
+            raise GithubPushError(
+                f"Could not read `{file_path}`: {message}",
+                status_code=502,
+            ) from exc
+
+    if existing_file is not None:
+        current_content = existing_file.decoded_content.decode("utf-8")
+        if current_content == new_content:
+            return PushResult(
+                status="unchanged",
+                branch=branch_name,
+                pull_request_url=open_pr.html_url if open_pr else None,
+                message="No changes made to the dataset.",
+            )
+
+    author = InputGitAuthor(git_user_name, git_user_email)
+    commit_message = (
+        f"Updating {file_path}" if existing_file is not None else f"Creating {file_path}"
+    )
 
     try:
-        push_branch(local_repo, branch_name, set_upstream=not branch_exists_on_remote)
-    except GitCommandError as exc:
+        if existing_file is not None:
+            repo.update_file(
+                file_path,
+                commit_message,
+                new_content,
+                existing_file.sha,
+                branch=branch_name,
+                author=author,
+                committer=author,
+            )
+        else:
+            repo.create_file(
+                file_path,
+                commit_message,
+                new_content,
+                branch=branch_name,
+                author=author,
+                committer=author,
+            )
+    except GithubException as exc:
+        message = exc.data.get("message", str(exc)) if exc.data else str(exc)
         raise GithubPushError(
-            f"Failed to push branch `{branch_name}`: {exc}",
+            f"Failed to commit `{file_path}`: {message}",
             status_code=502,
         ) from exc
 
@@ -310,12 +323,20 @@ def push_metadata_to_github(
             pull_request_url=open_pr.html_url,
         )
 
-    pr = repo.create_pull(
-        title=pr_title,
-        body=pr_body,
-        head=branch_name,
-        base=repo.default_branch,
-    )
+    try:
+        pr = repo.create_pull(
+            title=pr_title,
+            body=pr_body,
+            head=branch_name,
+            base=default_branch,
+        )
+    except GithubException as exc:
+        message = exc.data.get("message", str(exc)) if exc.data else str(exc)
+        raise GithubPushError(
+            f"Could not create pull request: {message}",
+            status_code=502,
+        ) from exc
+
     return PushResult(
         status="created",
         branch=branch_name,
