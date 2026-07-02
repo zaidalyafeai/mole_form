@@ -9,11 +9,52 @@ from pathlib import Path
 from datetime import date
 from constants import *
 from github_push import GithubPushError, load_github_credentials, push_metadata_to_github, validate_github_username
+import streamlit_tags
 from streamlit_tags import st_tags
 from dotenv import load_dotenv
 from streamlit_pdf_viewer import pdf_viewer
 import streamlit.components.v1 as components
 import base64
+
+
+def _create_missing_sourcemaps(*packages) -> None:
+    """Create empty source-map stubs for any `sourceMappingURL` that points to a
+    missing `.map` file inside a package's bundled frontend.
+
+    Streamlit's ComponentRequestHandler raises FileNotFoundError (logging a full
+    traceback) whenever the browser requests a source map that was never shipped
+    with the package (e.g. ``streamlit_tags``'s ``bootstrap.min.css.map``). The
+    maps are harmless dev artifacts, so we generate tiny valid stubs to silence
+    the noise. This is best-effort and never raises."""
+    stub = '{"version":3,"sources":[],"names":[],"mappings":"","file":""}'
+    pattern = re.compile(rb"sourceMappingURL=([^\s*]+)")
+    for package in packages:
+        try:
+            build_dir = Path(package.__file__).resolve().parent / "frontend" / "build"
+            if not build_dir.is_dir():
+                continue
+            for asset in list(build_dir.rglob("*.css")) + list(build_dir.rglob("*.js")):
+                try:
+                    tail = asset.read_bytes()[-4096:]
+                except OSError:
+                    continue
+                for match in pattern.findall(tail):
+                    name = match.decode("utf-8", "ignore").strip()
+                    if not name.endswith(".map"):
+                        continue
+                    map_path = (asset.parent / name).resolve()
+                    if build_dir.resolve() not in map_path.parents:
+                        continue
+                    if not map_path.exists():
+                        try:
+                            map_path.write_text(stub, encoding="utf-8")
+                        except OSError:
+                            pass
+        except Exception:
+            pass
+
+
+_create_missing_sourcemaps(streamlit_tags)
 
 MOLE_URL = "https://mextract-production.up.railway.app"
 MOLE_REQUEST_TIMEOUT = 300
@@ -1120,10 +1161,12 @@ def main():
         )
 
         if upload_file:
-            metadata = load_json(file=upload_file)
-            if metadata:
-                update_config(metadata)
-                st.session_state._loaded_json_url = upload_file.name
+            upload_id = f"upload:{getattr(upload_file, 'file_id', upload_file.name)}"
+            if st.session_state.get("_loaded_json_url") != upload_id:
+                metadata = load_json(file=upload_file)
+                if metadata:
+                    update_config(metadata)
+                    st.session_state._loaded_json_url = upload_id
         elif json_url:
             apply_metadata_from_url(json_url)
         elif not st.session_state.show_form:
