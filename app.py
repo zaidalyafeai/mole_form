@@ -176,14 +176,34 @@ def config_to_catalogue_format(config: dict) -> dict:
 
 
 def validate_url(url):
-    try:
-        response = requests.head(url, allow_redirects=True, timeout=5)
-        if response.status_code == 200:
-            return True
-        else:
-            return False
-    except:
+    if not isinstance(url, str):
         return False
+    url = url.strip()
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        return False
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; MasaderForm/1.0; +https://github.com/ARBML/masader)",
+    }
+    # Statuses that only mean the host is blocking bots / needs auth, not that
+    # the link is broken. Publishers (MDPI, IEEE, Elsevier, ...) commonly do
+    # this, so a valid paper link should still pass validation.
+    reachable_but_blocked = {401, 403, 405, 406, 429}
+    for method in (requests.head, requests.get):
+        try:
+            response = method(
+                url, allow_redirects=True, timeout=15, headers=headers
+            )
+        except requests.RequestException:
+            continue
+        status = response.status_code
+        if status < 400 or status in reachable_but_blocked:
+            return True
+        # HEAD can be unreliable (e.g. 404/405 while GET works); retry with GET
+        # before rejecting. On GET, treat a real error status as invalid.
+        if method is requests.get:
+            return False
+    return False
 
 
 def validate_dataname(name: str) -> bool:
@@ -669,6 +689,7 @@ def reset_config():
     st.session_state.paper_url = ""
     st.session_state.paper_pdf = None
     st.session_state._last_ai_paper_url = ""
+    st.session_state._last_ai_pdf_id = ""
     st.session_state._loaded_json_url = ""
     st.session_state.submit_result = None
     st.session_state.submitting = False
@@ -1184,13 +1205,19 @@ def main():
         )
         paper_url = st.session_state.paper_url
         if upload_pdf:
-            # Prepare the file for sending
-            pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
-            st.session_state.paper_pdf = upload_pdf
-            st.session_state._paper_pdf_cache_key = ""
-            st.session_state._paper_pdf_bytes = None
-            metadata = get_metadata(pdf=pdf)
-            update_config(metadata, update_url=False)
+            # Guard against re-extraction on every rerun (e.g. when submitting):
+            # only call the annotation server once per uploaded file.
+            upload_id = f"pdf:{getattr(upload_pdf, 'file_id', upload_pdf.name)}"
+            if st.session_state.get("_last_ai_pdf_id") != upload_id:
+                # Prepare the file for sending
+                pdf = (upload_pdf.name, upload_pdf.getvalue(), upload_pdf.type)
+                st.session_state.paper_pdf = upload_pdf
+                st.session_state._paper_pdf_cache_key = ""
+                st.session_state._paper_pdf_bytes = None
+                metadata = get_metadata(pdf=pdf)
+                if metadata:
+                    update_config(metadata, update_url=False)
+                    st.session_state._last_ai_pdf_id = upload_id
         elif paper_url:
             run_ai_extraction(paper_url)
         else:
