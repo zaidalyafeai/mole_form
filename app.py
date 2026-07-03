@@ -74,7 +74,7 @@ _APP_DIR = Path(__file__).resolve().parent
 
 load_dotenv(_APP_DIR / ".env", override=True)
 GITHUB_TOKEN, GIT_USER_NAME, GIT_USER_EMAIL = load_github_credentials()
-DEFAULT_MODEL_NAME = os.environ.get("MOLE_MODEL_NAME", "qwen/qwen3.6-35b-a3b")
+DEFAULT_MODEL_NAME = os.environ.get("MOLE_MODEL_NAME", "google/gemini-3-flash-preview")
 
 import requests
 
