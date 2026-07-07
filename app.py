@@ -723,12 +723,12 @@ def apply_metadata_from_url(url: str) -> bool:
 
 
 ANNOTATION_OPTIONS = [
-    "🤖 AI Annotation",
+    "⚡ AI Annotation",
     "🦚 Manual Annotation",
     "🚥 Load Annotation",
 ]
 URL_ANNOTATION_TYPES = {
-    "ai": "🤖 AI Annotation",
+    "ai": "⚡ AI Annotation",
     "manual": "🦚 Manual Annotation",
     "load": "🚥 Load Annotation",
 }
@@ -943,8 +943,8 @@ def create_element(
     elif "list[dict[" in type:
         with st.expander(f""):
             st.caption(
-                "Use this field to add dialect subsets of the dataset. For example if the dataset has 1,000 sentences in the Yemeni dialect.\
-                        For example take a look at the [shami subsets](https://github.com/ARBML/masader/tree/main/datasets/shami.json)."
+                "Use this field to add dialect subsets of the dataset. For example, if the dataset has 1,000 sentences in the Yemeni dialect, \
+                        take a look at the [shami subsets](https://github.com/ARBML/masader/tree/main/datasets/shami.json)."
             )
             render_list_dict(key, type)
     else:
@@ -1139,21 +1139,20 @@ def submit_form():
 def main():
     st.info(
         """
-    This is the MOLE form to that allows users to annotate metadata of datasets manually or using AI.
-    - There are three options
-        - 🦚 Manual Annotation: You can have to insert all the metadata manually.
-        - 👾 AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
+    - This is the Masader form that allows users to annotate metadata of datasets manually or using AI.
+        - 🦚 Manual Annotation: You have to insert all the metadata manually.
+        - ⚡ AI Annotation: Insert the pdf/arxiv link to extract the metadata automatically. 
         - 🚥 Load Annotation: Use this option to load a saved metadata annotation.
-
-    Deep-link with query parameters: `?annotation_type=manual|ai|load`, `pdf_link=<url>`, or `json_url=<direct-json-url>` (e.g. a raw GitHub link to a `.json` file).
-    If you have face any issues post them on [GitHub](https://github.com/IVUL-KAUST/MOLE/issues).
+    - Before you submit the dataset, you need to:
+        - Have a valid GitHub username
+        - Check the dataset does not exist in the catalogue using the search [Masader](https://arbml.github.io/masader/search)
+        - Have the direct link to the dataset and paper link
+    - Once you submit the dataset, we will send a PR, make sure you follow up there if you have any questions.     
+    - If you face any issues post them on [GitHub](https://github.com/ARBML/masader/issues).
     """,
     )
 
-    # - Check the dataset does not exist in the catelouge using the search [Masader](https://arbml.github.io/masader/search)
-    # - You have a valid GitHub username
-    # - You have the direct link to the dataset repository
-    # Once you submit the dataset, we will send a PR, make sure you follow up there if you have any questions. 
+    
 
     if "show_form" not in st.session_state:
         reset_config()
@@ -1172,7 +1171,7 @@ def main():
 
     if options == "🚥 Load Annotation":
         upload_file = st.file_uploader(
-            "Upload Json",
+            "Upload JSON",
             help="You can use this widget to preload any dataset from https://github.com/ARBML/masader/tree/main/datasets",
         )
         json_url = st.text_input(
@@ -1193,10 +1192,10 @@ def main():
         elif not st.session_state.show_form:
             reset_config()
 
-    if options == "🤖 AI Annotation":
+    if options == "⚡ AI Annotation":
         st.warning(
-            "‼️ AI annotation uses LLMs to extract the metadata form papers. However, this approach\
-                is not reliable as LLMs can hellucinate and extract untrustworthy informations. \
+            "‼️ AI annotation uses LLMs to extract the metadata from papers. However, this approach\
+                is not reliable as LLMs can hallucinate and extract untrustworthy information. \
                 Make sure you revise the generated metadata before you submit."
         )
         upload_pdf = st.file_uploader(
