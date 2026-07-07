@@ -1146,7 +1146,7 @@ def main():
     - Before you submit the dataset, you need to:
         - Have a valid GitHub username
         - Check the dataset does not exist in the catalogue using the search [Masader](https://arbml.github.io/masader/search)
-        - Have the direct link to the dataset and paper link
+        - Have the direct link to the dataset and paper link.
     - Once you submit the dataset, we will send a PR, make sure you follow up there if you have any questions.     
     - If you face any issues post them on [GitHub](https://github.com/ARBML/masader/issues).
     """,
