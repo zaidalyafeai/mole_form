@@ -56,7 +56,21 @@ def _create_missing_sourcemaps(*packages) -> None:
 
 _create_missing_sourcemaps(streamlit_tags)
 
-MOLE_URL = "https://mextract-production.up.railway.app"
+
+def normalize_service_url(url: str, default: str) -> str:
+    normalized = (url or default).strip().rstrip("/")
+    if normalized and not normalized.startswith(("http://", "https://")):
+        normalized = f"https://{normalized}"
+    return normalized
+
+
+_APP_DIR = Path(__file__).resolve().parent
+load_dotenv(_APP_DIR / ".env", override=True)
+
+MOLE_URL = normalize_service_url(
+    os.environ.get("MOLE_URL", ""),
+    "https://mole-production-45f2.up.railway.app",
+)
 MOLE_REQUEST_TIMEOUT = 300
 VENUES_URL = "https://raw.githubusercontent.com/ARBML/masader/main/venues.json"
 
@@ -69,34 +83,38 @@ st.set_page_config(
 )
 "# 📮 :rainbow[Masader Form]"
 
-_APP_DIR = Path(__file__).resolve().parent
-
-
-load_dotenv(_APP_DIR / ".env", override=True)
 GITHUB_TOKEN, GIT_USER_NAME, GIT_USER_EMAIL = load_github_credentials()
 DEFAULT_MODEL_NAME = os.environ.get("MOLE_MODEL_NAME", "google/gemini-3-flash-preview")
 
 import requests
 
 # Example Usage
-mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi"])
+mode = st.selectbox("Mode", ["ar", "en", "ru", "jp", "fr", "multi", "model", "tool", "s2orc", "bib"])
 
 try:
-    schema_payload = requests.post(
-        f"{MOLE_URL}/schema", data={"name": mode}, timeout=60
-    ).json()
-    schema = (
-        json.loads(schema_payload)
-        if isinstance(schema_payload, str)
-        else schema_payload
-    )
+    schema = json.load(open(f"schema/{mode}.json"))
 except Exception as e:
     st.error(f"Failed to load schema: {e}")
     st.stop()
 
+
+def normalize_answer_type(answer_type: str) -> str:
+    normalized = answer_type.strip()
+    lower = normalized.lower()
+    if lower == "list[str]":
+        return "list[str]"
+    if lower.startswith("list[dict["):
+        return re.sub(r"^list\[dict\[", "list[dict[", normalized, flags=re.I)
+    if lower == "date[year]":
+        return "year"
+    if lower in ("float", "int", "bool", "str", "url"):
+        return lower
+    return normalized
+
+
 column_types = {}
 for c in schema:
-    column_types[c] = schema[c]["answer_type"]
+    column_types[c] = normalize_answer_type(schema[c]["answer_type"])
 
 column_lens = {}
 for c in schema:
@@ -265,44 +283,81 @@ def default_for_column(column: str):
 
 def coerce_value_for_column(column: str, value):
     answer_type = column_types[column]
-    if "options" not in schema[column]:
-        return value
 
-    options = schema[column]["options"]
-
-    if answer_type == "str":
-        if value in options:
-            return value
+    if answer_type == "list[str]":
         if isinstance(value, str):
+            value = [value.strip()] if value.strip() else []
+        elif isinstance(value, (int, float)):
+            value = [str(value)]
+        elif not isinstance(value, list):
+            return default_for_column(column)
+        if "options" in schema[column]:
+            options = schema[column]["options"]
+            coerced = []
+            for item in value:
+                if item in options:
+                    coerced.append(item)
+                    continue
+                if isinstance(item, str):
+                    lowered = item.lower()
+                    for option in options:
+                        if option.lower() == lowered:
+                            coerced.append(option)
+                            break
+            return coerced if coerced else default_for_column(column)
+        return [str(item) for item in value]
+
+    if answer_type in ("str", "url"):
+        if isinstance(value, list):
+            value = ", ".join(str(item) for item in value)
+        elif value is None:
+            value = ""
+        elif not isinstance(value, str):
+            value = str(value)
+        if "options" in schema[column]:
+            options = schema[column]["options"]
+            if value in options:
+                return value
             lowered = value.lower()
             for option in options:
                 if option.lower() == lowered:
                     return option
-        return default_for_column(column)
-
-    if answer_type == "list[str]":
-        if not isinstance(value, list):
             return default_for_column(column)
-        coerced = []
-        for item in value:
-            if item in options:
-                coerced.append(item)
-                continue
-            if isinstance(item, str):
-                lowered = item.lower()
-                for option in options:
-                    if option.lower() == lowered:
-                        coerced.append(option)
-                        break
-        return coerced if coerced else default_for_column(column)
+        return value
+
+    if answer_type in ("int", "year"):
+        if value is None or value == "":
+            return default_for_column(column)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default_for_column(column)
+
+    if answer_type == "float":
+        if value is None or value == "":
+            return default_for_column(column)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default_for_column(column)
+
+    if answer_type == "bool":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes"}
+        return bool(value)
 
     return value
 
 
-def ensure_widget_value(column: str, options: list) -> None:
-    if column not in st.session_state or not options:
+def ensure_widget_value(
+    column: str, options: list | None = None, *, schema_column: str | None = None
+) -> None:
+    if column not in st.session_state:
         return
-    coerced = coerce_value_for_column(column, st.session_state[column])
+    type_column = schema_column or column
+    coerced = coerce_value_for_column(type_column, st.session_state[column])
     if coerced != st.session_state[column]:
         st.session_state[column] = coerced
 
@@ -313,11 +368,7 @@ def update_session_config(json_data):
         if use_annotations_paper:
             st.session_state[f"annot_{column}"] = annotations.get(column, 1)
         type = column_types[column]
-        if type == "list[str]":
-            values = coerce_value_for_column(column, config_value(json_data, column))
-            st.session_state[column] = values
-
-        elif "list[dict[" in type:
+        if "list[dict[" in type:
             subsets = config_value(json_data, column)
             if not isinstance(subsets, list):
                 subsets = []
@@ -335,15 +386,13 @@ def update_session_config(json_data):
                 i += 1
             if len(subsets) > 0:
                 for i, subset in enumerate(subsets):
-                    for subkey in subset:
+                    for subkey in keys:
+                        if subkey not in subset:
+                            continue
                         if subkey in column_types:
-                            raw_value = subset[subkey]
-                            if subkey in schema and "options" in schema[subkey]:
-                                raw_value = coerce_value_for_column(subkey, raw_value)
-                            if column_types[subkey] == "float":
-                                st.session_state[f"{column}_{i}_{subkey}"] = float(raw_value)
-                            else:
-                                st.session_state[f"{column}_{i}_{subkey}"] = raw_value
+                            st.session_state[f"{column}_{i}_{subkey}"] = (
+                                coerce_value_for_column(subkey, subset[subkey])
+                            )
             else:
                 for subkey in keys:
                     if subkey in schema:
@@ -357,8 +406,6 @@ def update_session_config(json_data):
                                 st.session_state[f"{column}_0_{subkey}"] = 0.0
                             else:
                                 st.session_state[f"{column}_0_{subkey}"] = ""
-        elif type == "bool":
-            st.session_state[column] = bool(config_value(json_data, column))
         else:
             st.session_state[column] = coerce_value_for_column(
                 column, config_value(json_data, column)
@@ -397,15 +444,16 @@ def venue_columns() -> tuple[str | None, str | None, str | None]:
 
 
 def apply_paper_link(url: str) -> None:
-    url = normalize_paper_url(url)
-    if not url:
+    if not url.strip():
         return
-    if normalize_paper_url(st.session_state.get("paper_url", "")) != url:
+    preview_url = normalize_paper_url(url)
+    catalogue_url = normalize_paper_catalogue_url(url)
+    if normalize_paper_url(st.session_state.get("paper_url", "")) != preview_url:
         clear_paper_pdf_cache()
-    st.session_state.paper_url = url
+    st.session_state.paper_url = preview_url
     paper_col = paper_link_column()
     if paper_col:
-        st.session_state[paper_col] = url
+        st.session_state[paper_col] = catalogue_url
 
 
 def sync_paper_link_from_url() -> None:
@@ -517,7 +565,7 @@ def update_config(config, update_url=True, paper_link=None):
     if paper_link:
         paper_col = paper_link_column()
         if paper_col:
-            merged[paper_col] = normalize_paper_url(paper_link)
+            merged[paper_col] = normalize_paper_catalogue_url(paper_link)
     if venues is not None:
         merged = resolve_venue_fields(merged, venues)
     if "annotations_from_paper" not in merged:
@@ -548,21 +596,30 @@ def render_list_dict(c, type):
             elem = None
             with cols[j]:
                 if subkey in schema:
+                    sub_type = column_types[subkey]
+                    widget_key = f"{c}_{i}_{subkey}"
                     if "options" in schema[subkey]:
-                        options = schema[subkey]["options"]
+                        ensure_widget_value(widget_key, schema_column=subkey)
                         elem = st.selectbox(
-                            subkey, options=options, key=f"{c}_{i}_{subkey}"
+                            subkey, options=schema[subkey]["options"], key=widget_key
+                        )
+                    elif sub_type == "bool":
+                        elem = st.checkbox(subkey, key=widget_key)
+                    elif sub_type == "float":
+                        elem = st.number_input(
+                            subkey,
+                            key=widget_key,
+                            step=0.1,
+                        )
+                    elif sub_type in ("int", "year"):
+                        elem = st.number_input(
+                            subkey,
+                            key=widget_key,
+                            step=1,
                         )
                     else:
-                        type = column_types[subkey]
-                        if type == "float":
-                            elem = st.number_input(
-                                subkey,
-                                key=f"{c}_{i}_{subkey}",
-                                step=0.1,
-                            )
-                        else:
-                            elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
+                        ensure_widget_value(widget_key, schema_column=subkey)
+                        elem = st.text_input(subkey, key=widget_key)
                 else:
                     elem = st.text_input(subkey, key=f"{c}_{i}_{subkey}")
             if j == 0:
@@ -643,24 +700,25 @@ def update_pr(new_dataset):
 def get_metadata(link="", pdf=None):
     url = f"{MOLE_URL}/run"
     form_data = {"schema_name": mode, "model_name": DEFAULT_MODEL_NAME}
-    if link != "":
-        response = requests.post(
-            url, data={"link": link, **form_data}, timeout=MOLE_REQUEST_TIMEOUT
-        )
-    elif pdf:
-        response = requests.post(
-            url, files={"file": pdf}, data=form_data, timeout=MOLE_REQUEST_TIMEOUT
-        )
-    else:
-        response = requests.get(url, timeout=MOLE_REQUEST_TIMEOUT)
+    try:
+        if link != "":
+            response = requests.post(
+                url, data={"link": link, **form_data}, timeout=MOLE_REQUEST_TIMEOUT
+            )
+        elif pdf:
+            response = requests.post(
+                url, files={"file": pdf}, data=form_data, timeout=MOLE_REQUEST_TIMEOUT
+            )
+        else:
+            response = requests.get(url, timeout=MOLE_REQUEST_TIMEOUT)
+    except requests.RequestException as exc:
+        st.error(f"Could not reach the AI annotation server ({MOLE_URL}): {exc}")
+        return None
 
-    # Check if the request was successful
     if response.status_code == 200:
-        # Parse the JSON content
-        json_data = response.json()
-        return json_data
-    else:
-        st.error(response.text)
+        return response.json()
+
+    st.error(response.text)
     return None
 
 
@@ -741,22 +799,46 @@ def annotation_index_from_url() -> int:
     label = URL_ANNOTATION_TYPES.get(annotation_type)
     if label:
         return ANNOTATION_OPTIONS.index(label)
-    return 1
+    return ANNOTATION_OPTIONS.index("⚡ AI Annotation")
+
+
+def run_arxiv_ai_extraction(paper_url: str, catalogue_link: str) -> None:
+    metadata = get_metadata(link=catalogue_link)
+    if not metadata:
+        try:
+            pdf_bytes = get_pdf(paper_url)
+            pdf = (
+                f"{arxiv_paper_id(paper_url)}.pdf",
+                pdf_bytes,
+                "application/pdf",
+            )
+            metadata = get_metadata(pdf=pdf)
+        except requests.RequestException as exc:
+            st.warning(
+                "Could not download the arXiv PDF for AI extraction. "
+                f"Paper Link has been set — upload the PDF manually or open it in your browser. ({exc})"
+            )
+
+    if metadata:
+        update_config(metadata, update_url=False, paper_link=catalogue_link)
+        return
+
+    st.session_state._last_ai_paper_url = ""
+    update_config(create_default_json(), update_url=False, paper_link=catalogue_link)
 
 
 def run_ai_extraction(paper_url: str) -> None:
-    if st.session_state.get("_last_ai_paper_url") == paper_url:
+    cache_key = ai_extraction_cache_key(paper_url)
+    if st.session_state.get("_last_ai_paper_url") == cache_key:
         return
-    st.session_state._last_ai_paper_url = paper_url
-    normalized_link = normalize_paper_url(paper_url)
+    st.session_state._last_ai_paper_url = cache_key
+    catalogue_link = normalize_paper_catalogue_url(paper_url)
+
+    if "arxiv" in paper_url.lower():
+        run_arxiv_ai_extraction(paper_url, catalogue_link)
+        return
+
     try:
-        if "arxiv" in paper_url:
-            metadata = get_metadata(link=paper_url)
-            if metadata:
-                update_config(metadata, update_url=False, paper_link=normalized_link)
-            else:
-                st.session_state._last_ai_paper_url = ""
-            return
         response = requests.get(
             paper_url, timeout=30, headers=PDF_REQUEST_HEADERS
         )
@@ -770,19 +852,20 @@ def run_ai_extraction(paper_url: str) -> None:
             )
             metadata = get_metadata(pdf=pdf)
             if metadata:
-                update_config(metadata, update_url=False, paper_link=normalized_link)
+                update_config(metadata, update_url=False, paper_link=catalogue_link)
             else:
                 st.session_state._last_ai_paper_url = ""
         else:
             st.error(
                 f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
             )
-    except requests.RequestException:
+    except requests.RequestException as exc:
         st.warning(
             "Could not download the PDF for AI extraction (the host may be unreachable). "
             "Paper Link has been set — use Manual Annotation, upload the PDF, or open it in your browser."
+            f" ({exc})"
         )
-        update_config(create_default_json(), update_url=False, paper_link=normalized_link)
+        update_config(create_default_json(), update_url=False, paper_link=catalogue_link)
 
 
 def apply_url_query_params() -> None:
@@ -907,6 +990,8 @@ def create_element(
                 desc += f"- **{option}**: {schema[key]['option_description'][option]}\n"
             if help == "":
                 help = desc
+    if key in column_types:
+        ensure_widget_value(key)
     if type == "float":
         st.number_input(
             key,
@@ -969,15 +1054,39 @@ def create_element(
             )
 
 
-def fix_arxiv_link(link):
+def arxiv_paper_id(link: str) -> str:
+    link = link.strip()
     for version in range(1, 5):
         link = link.replace(f"v{version}", "")
-    if link.endswith(".pdf"):
-        return link
     if link.endswith("/"):
         link = link[:-1]
-    _id = link.split("/")[-1]
-    return f"https://arxiv.org/pdf/{_id}.pdf"
+    if link.lower().endswith(".pdf"):
+        link = link[:-4]
+    return link.split("/")[-1]
+
+
+def arxiv_abs_url(link: str) -> str:
+    return f"https://arxiv.org/abs/{arxiv_paper_id(link)}"
+
+
+def arxiv_pdf_url(link: str) -> str:
+    return f"https://arxiv.org/pdf/{arxiv_paper_id(link)}.pdf"
+
+
+def fix_arxiv_link(link):
+    if "arxiv.org" not in link:
+        return link
+    return arxiv_pdf_url(link)
+
+
+def normalize_paper_catalogue_url(url: str) -> str:
+    """URL stored in Paper_Link and sent to the AI annotation server."""
+    url = url.strip()
+    if url and not url.startswith(("http://", "https://")):
+        url = f"https://{url.lstrip('/')}"
+    if "arxiv.org" in url:
+        return arxiv_abs_url(url)
+    return url
 
 
 def normalize_paper_url(url: str) -> str:
@@ -985,8 +1094,14 @@ def normalize_paper_url(url: str) -> str:
     if url and not url.startswith(("http://", "https://")):
         url = f"https://{url.lstrip('/')}"
     if "arxiv.org" in url:
-        url = fix_arxiv_link(url)
+        url = arxiv_pdf_url(url)
     return url
+
+
+def ai_extraction_cache_key(paper_url: str) -> str:
+    if "arxiv" in paper_url:
+        return f"arxiv:{arxiv_paper_id(paper_url)}"
+    return paper_url.strip()
 
 
 PDF_REQUEST_HEADERS = {
@@ -1290,7 +1405,7 @@ def main():
                             options=options,
                             key=key,
                             help='',
-                            type=schema[key]["answer_type"],
+                            type=column_types[key],
                         )
                     submit_form()
 
