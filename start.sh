@@ -1,9 +1,12 @@
 #!/bin/sh
 set -e
 
-# Activate the Nixpacks/Railway virtualenv when present.
+# Railway/Nixpacks installs deps into /opt/venv. uv run expects a local .venv
+# and warns/fails when VIRTUAL_ENV=/opt/venv, so use the activated venv directly.
+ON_RAILWAY=false
 if [ -f /opt/venv/bin/activate ]; then
   . /opt/venv/bin/activate
+  ON_RAILWAY=true
 fi
 
 PY="${PYTHON:-python3}"
@@ -12,10 +15,10 @@ if ! command -v "$PY" >/dev/null 2>&1; then
 fi
 
 run() {
-  if command -v uv >/dev/null 2>&1; then
-    uv run "$@"
-  else
+  if [ "$ON_RAILWAY" = true ] || ! command -v uv >/dev/null 2>&1; then
     "$@"
+  else
+    uv run "$@"
   fi
 }
 
@@ -63,8 +66,4 @@ else:
     raise SystemExit("API backend did not become ready in time")
 PY
 
-if command -v uv >/dev/null 2>&1; then
-  exec uv run uvicorn proxy:app --host 0.0.0.0 --port "$PROXY_PORT" --log-level warning --no-access-log
-else
-  exec uvicorn proxy:app --host 0.0.0.0 --port "$PROXY_PORT" --log-level warning --no-access-log
-fi
+exec uvicorn proxy:app --host 0.0.0.0 --port "$PROXY_PORT" --log-level warning --no-access-log
