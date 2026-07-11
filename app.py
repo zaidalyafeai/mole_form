@@ -838,34 +838,11 @@ def run_ai_extraction(paper_url: str) -> None:
         run_arxiv_ai_extraction(paper_url, catalogue_link)
         return
 
-    try:
-        response = requests.get(
-            paper_url, timeout=30, headers=PDF_REQUEST_HEADERS
-        )
-        response.raise_for_status()
-        content_type = response.headers.get("Content-Type", "")
-        if "pdf" in content_type.lower() or paper_url.lower().endswith(".pdf"):
-            pdf = (
-                paper_url.split("/")[-1],
-                response.content,
-                content_type or "application/pdf",
-            )
-            metadata = get_metadata(pdf=pdf)
-            if metadata:
-                update_config(metadata, update_url=False, paper_link=catalogue_link)
-            else:
-                st.session_state._last_ai_paper_url = ""
-        else:
-            st.error(
-                f"Cannot retrieve a pdf from the link. Make sure {paper_url} is a direct link to a valid pdf"
-            )
-    except requests.RequestException as exc:
-        st.warning(
-            "Could not download the PDF for AI extraction (the host may be unreachable). "
-            "Paper Link has been set — use Manual Annotation, upload the PDF, or open it in your browser."
-            f" ({exc})"
-        )
-        update_config(create_default_json(), update_url=False, paper_link=catalogue_link)
+    metadata = get_metadata(link=paper_url)
+    if metadata:
+        update_config(metadata, update_url=False, paper_link=catalogue_link)
+    else:
+        st.session_state._last_ai_paper_url = ""
 
 
 def apply_url_query_params() -> None:
