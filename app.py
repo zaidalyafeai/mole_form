@@ -1240,7 +1240,7 @@ def submit_form():
     col1, col2 = st.columns(2)
     with col1:
         submit = st.form_submit_button(
-            "Submitting..." if submitting else "Submit", disabled=submitting
+            "Submitting..." if submitting else "Submit", disabled=True
         )
     with col2:
         download = st.form_submit_button("Download", disabled=submitting)
