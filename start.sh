@@ -1,24 +1,25 @@
 #!/bin/sh
 set -e
 
-# Railway/Nixpacks installs deps into /opt/venv. uv run expects a local .venv
-# and warns/fails when VIRTUAL_ENV=/opt/venv, so use the activated venv directly.
-ON_RAILWAY=false
-if [ -f /opt/venv/bin/activate ]; then
+# Find the Python interpreter installed by Nixpacks/Railway or local dev.
+if [ -x /opt/venv/bin/python ]; then
+  PY=/opt/venv/bin/python
+elif [ -f /opt/venv/bin/activate ]; then
   . /opt/venv/bin/activate
-  ON_RAILWAY=true
-fi
-
-PY="${PYTHON:-python3}"
-if ! command -v "$PY" >/dev/null 2>&1; then
+  PY=python
+elif [ -x .venv/bin/python ]; then
+  PY=.venv/bin/python
+elif command -v python3 >/dev/null 2>&1; then
+  PY=python3
+else
   PY=python
 fi
 
-run() {
-  if [ "$ON_RAILWAY" = true ] || ! command -v uv >/dev/null 2>&1; then
-    "$@"
+run_py() {
+  if command -v uv >/dev/null 2>&1 && [ ! -x /opt/venv/bin/python ]; then
+    uv run "$PY" "$@"
   else
-    uv run "$@"
+    "$PY" "$@"
   fi
 }
 
@@ -26,10 +27,10 @@ STREAMLIT_PORT=8501
 API_PORT=8001
 PROXY_PORT="${PORT:-8080}"
 
-run uvicorn api:app --host 127.0.0.1 --port "$API_PORT" --log-level warning &
+run_py -m uvicorn api:app --host 127.0.0.1 --port "$API_PORT" --log-level warning &
 UVICORN_PID=$!
 
-run streamlit run app.py \
+run_py -m streamlit run app.py \
   --server.address 127.0.0.1 \
   --server.port "$STREAMLIT_PORT" \
   --server.fileWatcherType none \
@@ -66,4 +67,4 @@ else:
     raise SystemExit("API backend did not become ready in time")
 PY
 
-exec uvicorn proxy:app --host 0.0.0.0 --port "$PROXY_PORT" --log-level warning --no-access-log
+exec "$PY" -m uvicorn proxy:app --host 0.0.0.0 --port "$PROXY_PORT" --log-level warning --no-access-log
