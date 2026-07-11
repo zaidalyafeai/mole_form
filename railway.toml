@@ -1,8 +1,9 @@
 [build]
 builder = "Nixpacks"
 
+[build.nixpacksPlan]
+packages = ["git"]
+
 [deploy]
 startCommand = "sh start.sh"
 restartPolicy = "on_failure"
-healthcheckPath = "/health"
-healthcheckTimeout = 120
